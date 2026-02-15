@@ -1,28 +1,36 @@
 -- Main.lua
-local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/shlexware/Orion/main/source')))()
+local Luna = loadstring(game:HttpGet("https://raw.githubusercontent.com/Nebula-Softworks/Luna-Interface-Suite/main/source.lua"))()
 
-local Window = OrionLib:MakeWindow({
-    Name = "TDS Auto-Strat | Empty Template",
-    HidePremium = false,
-    SaveConfig = true,
-    ConfigFolder = "TDSAutoStrat"
+local Window = Luna:CreateWindow({
+    Title = "TDS Auto-Strat | My Edition",
+    TabWidth = 160,
+    Size = UDim2.fromOffset(580, 460)
 })
 
-local TabGuides = Window:MakeTab({Name = "Guides", Icon = "rbxassetid://4483345998"})
-local TabStrategies = Window:MakeTab({Name = "Strategies", Icon = "rbxassetid://4483345998"})
-local TabSettings = Window:MakeTab({Name = "Settings", Icon = "rbxassetid://4483345998"})
+local MainTab = Window:AddTab({ Title = "Main" })
+local SettingsTab = Window:AddTab({ Title = "Settings" })
 
-TabStrategies:AddButton({
-    Name = "Запустить стратегию (пока пусто)",
+MainTab:AddLabel("Luna UI загружена успешно!")
+
+MainTab:AddButton({
+    Title = "Тест стратегии",
     Callback = function()
-        OrionLib:MakeNotification({Name = "Info", Content = "Стратегия не выбрана!", Time = 5})
+        Luna:Notify({ Title = "Info", Content = "Стратегия пока пустая!" })
     end
 })
 
-TabStrategies:AddDropdown({
-    Name = "Выбери стратегию",
-    Options = {"Нет стратегий"},
-    Callback = function(Value) end    
+MainTab:AddDropdown({
+    Title = "Выбери карту",
+    Items = {"Crossroads", "Pizza Party", "Badlands"},
+    Callback = function(value)
+        print("Выбрана карта: " .. value)
+    end
 })
 
-OrionLib:Init()
+SettingsTab:AddToggle({
+    Title = "Авто-скип волн",
+    Default = false,
+    Callback = function(state)
+        print("Авто-скип: " .. tostring(state))
+    end
+})
