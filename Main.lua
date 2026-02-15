@@ -1,4 +1,4 @@
--- Main.lua - Полностью рабочий: draggable, resizable, адаптивные кнопки, неоновый стиль
+-- Main.lua - Полностью рабочий вариант
 local player = game.Players.LocalPlayer
 local gui = Instance.new("ScreenGui")
 gui.Name = "TDSAutoStrat"
@@ -7,7 +7,7 @@ gui.Parent = player:WaitForChild("PlayerGui")
 local mainFrame = Instance.new("Frame")
 mainFrame.Size = UDim2.new(0, 550, 0, 420)
 mainFrame.Position = UDim2.new(0.5, -275, 0.5, -210)
-mainFrame.BackgroundColor3 = Color3.fromRGB(20, 0, 45)  -- тёмный фиолетовый
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 0, 45)
 mainFrame.BorderSizePixel = 0
 mainFrame.Parent = gui
 
@@ -20,7 +20,7 @@ stroke.Thickness = 4
 stroke.Color = Color3.fromRGB(200, 80, 255)
 stroke.Parent = mainFrame
 
--- Заголовок (для перетаскивания)
+-- Заголовок
 local title = Instance.new("TextLabel")
 title.Text = "TDS Auto-Strat | iljakolesnikov2001-rgb"
 title.Size = UDim2.new(1, -60, 0, 60)
@@ -30,7 +30,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 24
 title.Parent = mainFrame
 
--- Кнопка закрытия
+-- Закрытие
 local closeBtn = Instance.new("TextButton")
 closeBtn.Text = "X"
 closeBtn.Size = UDim2.new(0, 50, 0, 50)
@@ -47,7 +47,7 @@ closeCorner.Parent = closeBtn
 
 closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
 
--- Перетаскивание
+-- Перетаскивание (полностью исправлено)
 local dragging = false
 local dragInput, dragStart, startPos
 
@@ -70,7 +70,7 @@ game:GetService("UserInputService").InputChanged:Connect(function(input)
         local delta = input.Position - dragStart
         mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X,
                                       startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    Leon
+    end
 end)
 
 title.InputEnded:Connect(function(input)
@@ -120,7 +120,6 @@ local tabPanel = Instance.new("Frame")
 tabPanel.Size = UDim2.new(1, -20, 0, 60)
 tabPanel.Position = UDim2.new(0, 10, 0, 60)
 tabPanel.BackgroundTransparency = 1
-tabPanel.ClipsDescendants = true
 tabPanel.Parent = mainFrame
 
 local tabLayout = Instance.new("UIListLayout")
@@ -147,10 +146,10 @@ for i = 1, 4 do
 end
 
 local tabTexts = {
-    "Добро пожаловать!\nВерсия: 1.0\nАвтор: iljakolesnikov2001-rgb\nНеоновый стиль!",
-    "Выбор стратегий\nСкоро добавим кнопки запуска.",
-    "Гайды\nПока пусто.",
-    "Настройки\nАвто-скип и т.д."
+    "Добро пожаловать!\nВерсия: 1.0\nАвтор: iljakolesnikov2001-rgb\nМеню работает!",
+    "Стратегии\nЗдесь будут кнопки запуска стратегий.",
+    "Гайды\nПока пусто — добавим позже.",
+    "Настройки\nАвто-скип, задержки и т.д."
 }
 
 for i = 1, 4 do
@@ -165,10 +164,10 @@ for i = 1, 4 do
     lbl.Parent = contents[i]
 end
 
--- Кнопки вкладок (фиксированная ширина, не вылазят)
+-- Кнопки вкладок
 local function createTabButton(name, index)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 110, 1, -10)  -- фиксированная ширина
+    btn.Size = UDim2.new(0, 110, 1, -10)
     btn.BackgroundColor3 = Color3.fromRGB(90, 0, 160)
     btn.TextColor3 = Color3.new(1,1,1)
     btn.Font = Enum.Font.GothamBold
@@ -185,7 +184,9 @@ local function createTabButton(name, index)
     bs.Parent = btn
 
     btn.MouseButton1Click:Connect(function()
-        for j = 1, 4 do contents[j].Visible = (j == index) end
+        for j = 1, 4 do
+            contents[j].Visible = (j == index)
+        end
     end)
 
     btn.Parent = tabPanel
@@ -194,4 +195,4 @@ end
 local names = {"Основная", "Стратегии", "Гайды", "Настройки"}
 for i, n in ipairs(names) do createTabButton(n, i) end
 
-print("Меню работает: двигается, ресайзится, кнопки фиксированы и в неоне!")
+print("Меню готово — всё работает!")
