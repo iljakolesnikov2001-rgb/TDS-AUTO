@@ -2,45 +2,43 @@
 local Luna = loadstring(game:HttpGet("https://raw.githubusercontent.com/Nebula-Softworks/Luna-Interface-Suite/main/source.lua"))()
 
 local Window = Luna:CreateWindow({
-    Title = "TDS Auto-Strat | My Edition",
+    Title = "TDS Auto-Strat | iljakolesnikov2001-rgb",
     TabWidth = 160,
-    Size = UDim2.fromOffset(620, 520)
+    Size = UDim2.fromOffset(650, 550)
 })
 
--- 4 вкладки
 local TabMain = Window:AddTab({ Title = "Основная" })
-local TabSelect = Window:AddTab({ Title = "Выбор стратегий" })
+local TabStrat = Window:AddTab({ Title = "Стратегии" })
 local TabGuides = Window:AddTab({ Title = "Гайды" })
 local TabSettings = Window:AddTab({ Title = "Настройки" })
 
--- Основная вкладка с текстом
+-- Основная вкладка
 TabMain:AddLabel("Добро пожаловать в TDS Auto-Strat!")
 TabMain:AddLabel("Версия: 1.0")
 TabMain:AddLabel("Автор: iljakolesnikov2001-rgb")
-TabMain:AddLabel("Здесь будет основная информация и статистика.")
+TabMain:AddLabel("Скрипт работает! Здесь будет статистика и информация.")
 
--- Вкладка выбора стратегий
-TabSelect:AddDropdown({
-    Title = "Выбери стратегию",
-    Items = {"Нет стратегий", "Crossroads Solo", "Pizza Party Trio", "Badlands Quad"},
-    Callback = function(value)
-        Luna:Notify({ Title = "Выбрано", Content = value })
+-- Стратегии
+TabStrat:AddDropdown({
+    Title = "Выбор стратегии",
+    Items = {"Crossroads Solo", "Pizza Party Trio", "Badlands Quad", "Wrecked Battlefield"},
+    Callback = function(val)
+        Luna:Notify({ Title = "Выбрано", Content = val })
     end
 })
 
-TabSelect:AddButton({
-    Title = "Запустить стратегию",
+TabStrat:AddButton({
+    Title = "Запустить",
     Callback = function()
-        Luna:Notify({ Title = "Info", Content = "Стратегия пока не подключена!" })
+        Luna:Notify({ Title = "Запуск", Content = "Стратегия пока не подключена!" })
     end
 })
 
--- Гайды (пусто пока)
-TabGuides:AddLabel("Здесь будут гайды и описания.")
+-- Гайды
+TabGuides:AddLabel("Пока пусто — добавим позже.")
 
 -- Настройки
-TabSettings:AddToggle({
-    Title = "Авто-скип волн",
-    Default = false,
-    Callback = function(state) end
-})
+TabSettings:AddToggle({ Title = "Авто-скип", Default = true, Callback = function() end })
+TabSettings:AddSlider({ Title = "Задержка", Min = 0.1, Max = 5, Default = 1, Callback = function() end })
+
+Luna:Notify({ Title = "Загружено", Content = "Меню готово!" })
