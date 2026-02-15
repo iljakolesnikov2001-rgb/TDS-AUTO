@@ -1,44 +1,37 @@
 -- Main.lua
-local Luna = loadstring(game:HttpGet("https://raw.githubusercontent.com/Nebula-Softworks/Luna-Interface-Suite/main/source.lua"))()
+local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/jensonhirst/Rayfield/main/source'))()
 
-local Window = Luna:CreateWindow({
-    Title = "TDS Auto-Strat | iljakolesnikov2001-rgb",
-    TabWidth = 160,
-    Size = UDim2.fromOffset(650, 550)
+local Window = Rayfield:CreateWindow({
+    Name = "TDS Auto-Strat | iljakolesnikov2001-rgb",
+    LoadingTitle = "TDS Auto-Strat",
+    LoadingSubtitle = "by iljakolesnikov2001-rgb",
+    ConfigurationSaving = { Enabled = true, FolderName = "TDSAutoStrat" }
 })
 
-local TabMain = Window:AddTab({ Title = "Основная" })
-local TabStrat = Window:AddTab({ Title = "Стратегии" })
-local TabGuides = Window:AddTab({ Title = "Гайды" })
-local TabSettings = Window:AddTab({ Title = "Настройки" })
+local TabMain = Window:CreateTab("Основная", 4483362458)
+local TabStrat = Window:CreateTab("Стратегии", 4483362458)
+local TabGuides = Window:CreateTab("Гайды", 4483362458)
+local TabSettings = Window:CreateTab("Настройки", 4483362458)
 
--- Основная вкладка
-TabMain:AddLabel("Добро пожаловать в TDS Auto-Strat!")
-TabMain:AddLabel("Версия: 1.0")
-TabMain:AddLabel("Автор: iljakolesnikov2001-rgb")
-TabMain:AddLabel("Скрипт работает! Здесь будет статистика и информация.")
+-- Основная с текстом
+TabMain:CreateLabel("Добро пожаловать в TDS Auto-Strat!")
+TabMain:CreateLabel("Версия: 1.0")
+TabMain:CreateLabel("Автор: iljakolesnikov2001-rgb")
+TabMain:CreateLabel("Меню работает! Здесь статистика и инфо.")
 
 -- Стратегии
-TabStrat:AddDropdown({
-    Title = "Выбор стратегии",
-    Items = {"Crossroads Solo", "Pizza Party Trio", "Badlands Quad", "Wrecked Battlefield"},
-    Callback = function(val)
-        Luna:Notify({ Title = "Выбрано", Content = val })
-    end
+TabStrat:CreateDropdown({
+    Name = "Выбор стратегии",
+    Options = {"Crossroads Solo", "Pizza Party Trio", "Badlands Quad"},
+    CurrentOption = "Crossroads Solo",
+    Callback = function(val) Rayfield:Notify({ Title = "Выбрано", Content = val }) end
 })
 
-TabStrat:AddButton({
-    Title = "Запустить",
-    Callback = function()
-        Luna:Notify({ Title = "Запуск", Content = "Стратегия пока не подключена!" })
-    end
+TabStrat:CreateButton({
+    Name = "Запустить",
+    Callback = function() Rayfield:Notify({ Title = "Запуск", Content = "Пока не подключено!" }) end
 })
 
--- Гайды
-TabGuides:AddLabel("Пока пусто — добавим позже.")
-
--- Настройки
-TabSettings:AddToggle({ Title = "Авто-скип", Default = true, Callback = function() end })
-TabSettings:AddSlider({ Title = "Задержка", Min = 0.1, Max = 5, Default = 1, Callback = function() end })
-
-Luna:Notify({ Title = "Загружено", Content = "Меню готово!" })
+-- Гайды и настройки
+TabGuides:CreateLabel("Гайды скоро добавим.")
+TabSettings:CreateToggle({ Name = "Авто-скип", CurrentValue = false, Callback = function() end })
