@@ -4,45 +4,43 @@ local Luna = loadstring(game:HttpGet("https://raw.githubusercontent.com/Nebula-S
 local Window = Luna:CreateWindow({
     Title = "TDS Auto-Strat | My Edition",
     TabWidth = 160,
-    Size = UDim2.fromOffset(600, 500)
+    Size = UDim2.fromOffset(620, 520)
 })
 
-local MainTab = Window:AddTab({ Title = "Главная" })
-local StratTab = Window:AddTab({ Title = "Стратегии" })
-local SettingsTab = Window:AddTab({ Title = "Настройки" })
+-- 4 вкладки
+local TabMain = Window:AddTab({ Title = "Основная" })
+local TabSelect = Window:AddTab({ Title = "Выбор стратегий" })
+local TabGuides = Window:AddTab({ Title = "Гайды" })
+local TabSettings = Window:AddTab({ Title = "Настройки" })
 
-MainTab:AddLabel("Привет! Luna UI работает ✅")
-MainTab:AddLabel("Автор: твой ник")
+-- Основная вкладка с текстом
+TabMain:AddLabel("Добро пожаловать в TDS Auto-Strat!")
+TabMain:AddLabel("Версия: 1.0")
+TabMain:AddLabel("Автор: iljakolesnikov2001-rgb")
+TabMain:AddLabel("Здесь будет основная информация и статистика.")
 
-StratTab:AddButton({
-    Title = "Тест кнопка (пока ничего)",
-    Callback = function()
-        Luna:Notify({ Title = "Тест", Content = "Кнопка работает!" })
-    end
-})
-
-StratTab:AddDropdown({
-    Title = "Выбери карту",
-    Items = {"Crossroads", "Pizza Party", "Badlands", "Wrecked Battlefield"},
+-- Вкладка выбора стратегий
+TabSelect:AddDropdown({
+    Title = "Выбери стратегию",
+    Items = {"Нет стратегий", "Crossroads Solo", "Pizza Party Trio", "Badlands Quad"},
     Callback = function(value)
         Luna:Notify({ Title = "Выбрано", Content = value })
     end
 })
 
-SettingsTab:AddToggle({
-    Title = "Авто-скип волн",
-    Default = false,
-    Callback = function(state)
-        print("Авто-скип: " .. tostring(state))
+TabSelect:AddButton({
+    Title = "Запустить стратегию",
+    Callback = function()
+        Luna:Notify({ Title = "Info", Content = "Стратегия пока не подключена!" })
     end
 })
 
-SettingsTab:AddSlider({
-    Title = "Задержка (сек)",
-    Min = 0.1,
-    Max = 5,
-    Default = 1,
-    Callback = function(value)
-        print("Задержка: " .. value)
-    end
+-- Гайды (пусто пока)
+TabGuides:AddLabel("Здесь будут гайды и описания.")
+
+-- Настройки
+TabSettings:AddToggle({
+    Title = "Авто-скип волн",
+    Default = false,
+    Callback = function(state) end
 })
