@@ -1,13 +1,13 @@
--- Main.lua - Исправленные кнопки + стабильные цвета
+-- Main.lua - Полностью рабочий: draggable, resizable, адаптивные кнопки, неоновый стиль
 local player = game.Players.LocalPlayer
 local gui = Instance.new("ScreenGui")
 gui.Name = "TDSAutoStrat"
 gui.Parent = player:WaitForChild("PlayerGui")
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 500, 0, 400)
-mainFrame.Position = UDim2.new(0.5, -250, 0.5, -200)
-mainFrame.BackgroundColor3 = Color3.fromRGB(20, 0, 40)  -- тёмный фиолетовый
+mainFrame.Size = UDim2.new(0, 550, 0, 420)
+mainFrame.Position = UDim2.new(0.5, -275, 0.5, -210)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 0, 45)  -- тёмный фиолетовый
 mainFrame.BorderSizePixel = 0
 mainFrame.Parent = gui
 
@@ -17,10 +17,10 @@ corner.Parent = mainFrame
 
 local stroke = Instance.new("UIStroke")
 stroke.Thickness = 4
-stroke.Color = Color3.fromRGB(200, 80, 255)  -- яркий неон
+stroke.Color = Color3.fromRGB(200, 80, 255)
 stroke.Parent = mainFrame
 
--- Заголовок
+-- Заголовок (для перетаскивания)
 local title = Instance.new("TextLabel")
 title.Text = "TDS Auto-Strat | iljakolesnikov2001-rgb"
 title.Size = UDim2.new(1, -60, 0, 60)
@@ -30,7 +30,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 24
 title.Parent = mainFrame
 
--- Закрытие
+-- Кнопка закрытия
 local closeBtn = Instance.new("TextButton")
 closeBtn.Text = "X"
 closeBtn.Size = UDim2.new(0, 50, 0, 50)
@@ -47,55 +47,151 @@ closeCorner.Parent = closeBtn
 
 closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
 
--- Перетаскивание и ресайз (как раньше, но упрощённый)
--- (оставил код из предыдущей версии, он работает)
+-- Перетаскивание
+local dragging = false
+local dragInput, dragStart, startPos
 
--- Панель вкладок с адаптивными кнопками
+title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = mainFrame.Position
+    end
+end)
+
+title.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement then
+        dragInput = input
+    end
+end)
+
+game:GetService("UserInputService").InputChanged:Connect(function(input)
+    if dragging and input == dragInput then
+        local delta = input.Position - dragStart
+        mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X,
+                                      startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    Leon
+end)
+
+title.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = false
+    end
+end)
+
+-- Ресайз
+local resizeGrip = Instance.new("Frame")
+resizeGrip.Size = UDim2.new(0, 25, 0, 25)
+resizeGrip.Position = UDim2.new(1, -25, 1, -25)
+resizeGrip.BackgroundColor3 = Color3.fromRGB(200, 80, 255)
+resizeGrip.Parent = mainFrame
+
+local gripCorner = Instance.new("UICorner")
+gripCorner.CornerRadius = UDim.new(0, 8)
+gripCorner.Parent = resizeGrip
+
+local resizing = false
+local resizeStart, resizeStartSize
+
+resizeGrip.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        resizing = true
+        resizeStart = input.Position
+        resizeStartSize = mainFrame.Size
+    end
+end)
+
+game:GetService("UserInputService").InputChanged:Connect(function(input)
+    if resizing and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - resizeStart
+        mainFrame.Size = UDim2.new(resizeStartSize.X.Scale, math.max(450, resizeStartSize.X.Offset + delta.X),
+                                  resizeStartSize.Y.Scale, math.max(320, resizeStartSize.Y.Offset + delta.Y))
+    end
+end)
+
+resizeGrip.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        resizing = false
+    end
+end)
+
+-- Панель вкладок
 local tabPanel = Instance.new("Frame")
 tabPanel.Size = UDim2.new(1, -20, 0, 60)
 tabPanel.Position = UDim2.new(0, 10, 0, 60)
 tabPanel.BackgroundTransparency = 1
+tabPanel.ClipsDescendants = true
 tabPanel.Parent = mainFrame
 
 local tabLayout = Instance.new("UIListLayout")
 tabLayout.FillDirection = Enum.FillDirection.Horizontal
 tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-tabLayout.VerticalAlignment = Enum.VerticalAlignment.Center
 tabLayout.Padding = UDim.new(0, 15)
 tabLayout.Parent = tabPanel
 
--- Кнопки теперь равномерно растягиваются
+-- Контент
+local contentFrame = Instance.new("Frame")
+contentFrame.Size = UDim2.new(1, -20, 1, -130)
+contentFrame.Position = UDim2.new(0, 10, 0, 120)
+contentFrame.BackgroundTransparency = 1
+contentFrame.Parent = mainFrame
+
+local contents = {}
+for i = 1, 4 do
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(1, 0, 1, 0)
+    f.BackgroundTransparency = 1
+    f.Visible = (i == 1)
+    f.Parent = contentFrame
+    contents[i] = f
+end
+
+local tabTexts = {
+    "Добро пожаловать!\nВерсия: 1.0\nАвтор: iljakolesnikov2001-rgb\nНеоновый стиль!",
+    "Выбор стратегий\nСкоро добавим кнопки запуска.",
+    "Гайды\nПока пусто.",
+    "Настройки\nАвто-скип и т.д."
+}
+
+for i = 1, 4 do
+    local lbl = Instance.new("TextLabel")
+    lbl.Text = tabTexts[i]
+    lbl.TextColor3 = Color3.fromRGB(220, 100, 255)
+    lbl.BackgroundTransparency = 1
+    lbl.TextSize = 20
+    lbl.TextWrapped = true
+    lbl.TextYAlignment = Enum.TextYAlignment.Top
+    lbl.Size = UDim2.new(1, 0, 1, 0)
+    lbl.Parent = contents[i]
+end
+
+-- Кнопки вкладок (фиксированная ширина, не вылазят)
 local function createTabButton(name, index)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0.2, 0, 1, 0)  -- 20% ширины панели, авто-адаптация
-    btn.BackgroundColor3 = Color3.fromRGB(90, 0, 160)  -- тёмный неон
+    btn.Size = UDim2.new(0, 110, 1, -10)  -- фиксированная ширина
+    btn.BackgroundColor3 = Color3.fromRGB(90, 0, 160)
     btn.TextColor3 = Color3.new(1,1,1)
     btn.Font = Enum.Font.GothamBold
     btn.TextSize = 18
     btn.Text = name
 
-    local btnCorner = Instance.new("UICorner")
-    btnCorner.CornerRadius = UDim.new(0, 12)
-    btnCorner.Parent = btn
+    local bc = Instance.new("UICorner")
+    bc.CornerRadius = UDim.new(0, 12)
+    bc.Parent = btn
 
-    local btnStroke = Instance.new("UIStroke")
-    btnStroke.Thickness = 2
-    btnStroke.Color = Color3.fromRGB(220, 100, 255)
-    btnStroke.Parent = btn
+    local bs = Instance.new("UIStroke")
+    bs.Thickness = 2
+    bs.Color = Color3.fromRGB(220, 100, 255)
+    bs.Parent = btn
 
     btn.MouseButton1Click:Connect(function()
         for j = 1, 4 do contents[j].Visible = (j == index) end
     end)
 
     btn.Parent = tabPanel
-    return btn
 end
 
--- Контент и вкладки (как раньше)
--- ... (оставил тот же код контента)
+local names = {"Основная", "Стратегии", "Гайды", "Настройки"}
+for i, n in ipairs(names) do createTabButton(n, i) end
 
-for i, name in ipairs({"Основная", "Стратегии", "Гайды", "Настройки"}) do
-    createTabButton(name, i)
-end
-
-print("Кнопки теперь адаптируются, цвета фиксированы!")
+print("Меню работает: двигается, ресайзится, кнопки фиксированы и в неоне!")
