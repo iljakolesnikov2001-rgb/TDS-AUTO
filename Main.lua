@@ -1,4 +1,4 @@
--- Main.lua - Полностью рабочий вариант
+-- Main.lua - Fully working: draggable, resizable, adaptive buttons, neon purple style
 local player = game.Players.LocalPlayer
 local gui = Instance.new("ScreenGui")
 gui.Name = "TDSAutoStrat"
@@ -20,17 +20,17 @@ stroke.Thickness = 4
 stroke.Color = Color3.fromRGB(200, 80, 255)
 stroke.Parent = mainFrame
 
--- Заголовок
+-- Title
 local title = Instance.new("TextLabel")
-title.Text = "TDS Auto-Strat | iljakolesnikov2001-rgb"
+title.Text = "TDS Auto-Strat"
 title.Size = UDim2.new(1, -60, 0, 60)
 title.BackgroundTransparency = 1
 title.TextColor3 = Color3.fromRGB(220, 100, 255)
 title.Font = Enum.Font.GothamBold
-title.TextSize = 24
+title.TextSize = 28
 title.Parent = mainFrame
 
--- Закрытие
+-- Close button
 local closeBtn = Instance.new("TextButton")
 closeBtn.Text = "X"
 closeBtn.Size = UDim2.new(0, 50, 0, 50)
@@ -47,7 +47,7 @@ closeCorner.Parent = closeBtn
 
 closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
 
--- Перетаскивание (полностью исправлено)
+-- Dragging
 local dragging = false
 local dragInput, dragStart, startPos
 
@@ -79,7 +79,7 @@ title.InputEnded:Connect(function(input)
     end
 end)
 
--- Ресайз
+-- Resize
 local resizeGrip = Instance.new("Frame")
 resizeGrip.Size = UDim2.new(0, 25, 0, 25)
 resizeGrip.Position = UDim2.new(1, -25, 1, -25)
@@ -115,7 +115,7 @@ resizeGrip.InputEnded:Connect(function(input)
     end
 end)
 
--- Панель вкладок
+-- Tab panel
 local tabPanel = Instance.new("Frame")
 tabPanel.Size = UDim2.new(1, -20, 0, 60)
 tabPanel.Position = UDim2.new(0, 10, 0, 60)
@@ -125,10 +125,11 @@ tabPanel.Parent = mainFrame
 local tabLayout = Instance.new("UIListLayout")
 tabLayout.FillDirection = Enum.FillDirection.Horizontal
 tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
 tabLayout.Padding = UDim.new(0, 15)
 tabLayout.Parent = tabPanel
 
--- Контент
+-- Content
 local contentFrame = Instance.new("Frame")
 contentFrame.Size = UDim2.new(1, -20, 1, -130)
 contentFrame.Position = UDim2.new(0, 10, 0, 120)
@@ -146,10 +147,10 @@ for i = 1, 4 do
 end
 
 local tabTexts = {
-    "Добро пожаловать!\nВерсия: 1.0\nАвтор: iljakolesnikov2001-rgb\nМеню работает!",
-    "Стратегии\nЗдесь будут кнопки запуска стратегий.",
-    "Гайды\nПока пусто — добавим позже.",
-    "Настройки\nАвто-скип, задержки и т.д."
+    "Welcome!\nVersion: 1.0\nNeon style activated!",
+    "Strategies\nComing soon.",
+    "Guides\nComing soon.",
+    "Settings\nAuto-skip and more."
 }
 
 for i = 1, 4 do
@@ -164,15 +165,16 @@ for i = 1, 4 do
     lbl.Parent = contents[i]
 end
 
--- Кнопки вкладок
+-- Tab buttons (adaptive - equal share)
 local function createTabButton(name, index)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 110, 1, -10)
+    btn.Size = UDim2.new(0.22, 0, 1, -10)  -- equal share, adapts on resize
     btn.BackgroundColor3 = Color3.fromRGB(90, 0, 160)
     btn.TextColor3 = Color3.new(1,1,1)
     btn.Font = Enum.Font.GothamBold
     btn.TextSize = 18
     btn.Text = name
+    btn.LayoutOrder = index
 
     local bc = Instance.new("UICorner")
     bc.CornerRadius = UDim.new(0, 12)
@@ -192,7 +194,7 @@ local function createTabButton(name, index)
     btn.Parent = tabPanel
 end
 
-local names = {"Основная", "Стратегии", "Гайды", "Настройки"}
+local names = {"Main", "Strategies", "Guides", "Settings"}
 for i, n in ipairs(names) do createTabButton(n, i) end
 
-print("Меню готово — всё работает!")
+print("Menu ready - everything works!")
