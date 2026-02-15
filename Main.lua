@@ -1,37 +1,51 @@
--- Main.lua
-local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/jensonhirst/Rayfield/main/source'))()
+-- Main.lua - Простое меню без библиотек
+local player = game.Players.LocalPlayer
+local gui = Instance.new("ScreenGui")
+gui.Parent = player:WaitForChild("PlayerGui")
+gui.Name = "TDSAutoStrat"
 
-local Window = Rayfield:CreateWindow({
-    Name = "TDS Auto-Strat | iljakolesnikov2001-rgb",
-    LoadingTitle = "TDS Auto-Strat",
-    LoadingSubtitle = "by iljakolesnikov2001-rgb",
-    ConfigurationSaving = { Enabled = true, FolderName = "TDSAutoStrat" }
-})
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 400, 0, 300)
+frame.Position = UDim2.new(0.5, -200, 0.5, -150)
+frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+frame.BorderSizePixel = 2
+frame.Parent = gui
 
-local TabMain = Window:CreateTab("Основная", 4483362458)
-local TabStrat = Window:CreateTab("Стратегии", 4483362458)
-local TabGuides = Window:CreateTab("Гайды", 4483362458)
-local TabSettings = Window:CreateTab("Настройки", 4483362458)
+local title = Instance.new("TextLabel")
+title.Text = "TDS Auto-Strat | iljakolesnikov2001-rgb"
+title.Size = UDim2.new(1, 0, 0, 50)
+title.BackgroundTransparency = 1
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 20
+title.Parent = frame
 
--- Основная с текстом
-TabMain:CreateLabel("Добро пожаловать в TDS Auto-Strat!")
-TabMain:CreateLabel("Версия: 1.0")
-TabMain:CreateLabel("Автор: iljakolesnikov2001-rgb")
-TabMain:CreateLabel("Меню работает! Здесь статистика и инфо.")
+local label1 = Instance.new("TextLabel")
+label1.Text = "Добро пожаловать! Версия 1.0"
+label1.Position = UDim2.new(0, 10, 0, 60)
+label1.Size = UDim2.new(1, -20, 0, 30)
+label1.BackgroundTransparency = 1
+label1.TextColor3 = Color3.fromRGB(200, 200, 200)
+label1.Parent = frame
 
--- Стратегии
-TabStrat:CreateDropdown({
-    Name = "Выбор стратегии",
-    Options = {"Crossroads Solo", "Pizza Party Trio", "Badlands Quad"},
-    CurrentOption = "Crossroads Solo",
-    Callback = function(val) Rayfield:Notify({ Title = "Выбрано", Content = val }) end
-})
+local label2 = Instance.new("TextLabel")
+label2.Text = "Вкладка: Основная"
+label2.Position = UDim2.new(0, 10, 0, 100)
+label2.Size = UDim2.new(1, -20, 0, 30)
+label2.BackgroundTransparency = 1
+label2.TextColor3 = Color3.fromRGB(200, 200, 200)
+label2.Parent = frame
 
-TabStrat:CreateButton({
-    Name = "Запустить",
-    Callback = function() Rayfield:Notify({ Title = "Запуск", Content = "Пока не подключено!" }) end
-})
+local button = Instance.new("TextButton")
+button.Text = "Тест кнопка (кликни)"
+button.Size = UDim2.new(0, 200, 0, 50)
+button.Position = UDim2.new(0.5, -100, 1, -70)
+button.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
+button.TextColor3 = Color3.new(1,1,1)
+button.Parent = frame
 
--- Гайды и настройки
-TabGuides:CreateLabel("Гайды скоро добавим.")
-TabSettings:CreateToggle({ Name = "Авто-скип", CurrentValue = false, Callback = function() end })
+button.MouseButton1Click:Connect(function()
+    label2.Text = "Кнопка работает!"
+end)
+
+print("Меню загружено!")
