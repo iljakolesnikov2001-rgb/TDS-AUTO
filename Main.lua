@@ -1,9 +1,11 @@
--- TDS Auto-Strat + Working Equipper
+-- TDS Auto-Strat [Build 1.2]
 local player = game.Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
 
--- === 1. ПОДГОТОВКА ТАБЛИЦЫ БАШЕН (ТВОЯ ЛОГИКА) ===
-local Towers = {
+print("[1] Инициализация систем...")
+
+-- === ЛОГИКА ПОИСКА (ТВОЯ) ===
+local TowersList = {
     "Scout","Sniper","Paintballer","Demoman","Hunter","Soldier","Militant",
     "Freezer","Assassin","Shotgunner","Pyromancer","Ace Pilot","Medic","Farm",
     "Rocketeer","Trapper","Military Base","Crook Boss",
@@ -17,42 +19,36 @@ local Towers = {
 }
 
 local function normalize(s) return s:lower():gsub("[^a-z0-9]", "") end
-local Normalized = {}
-for _, name in ipairs(Towers) do
-    table.insert(Normalized, {
-        raw = name,
-        norm = normalize(name),
-        words = name:lower():split(" ")
-    })
-end
-
 local function resolveTower(input)
-    if not input or input == "" then return end
+    if not input or input == "" then return nil end
     local n = normalize(input)
-    for _, t in ipairs(Normalized) do if t.norm == n then return t.raw end end
-    for _, t in ipairs(Normalized) do if t.norm:sub(1, #n) == n then return t.raw end end
-    for _, t in ipairs(Normalized) do
-        for _, w in ipairs(t.words) do if w:sub(1, #n) == n then return t.raw end end
+    for _, name in ipairs(TowersList) do
+        if normalize(name) == n then return name end
     end
+    for _, name in ipairs(TowersList) do
+        if normalize(name):sub(1, #n) == n then return name end
+    end
+    return nil
 end
 
--- === 2. ЗАГРУЗКА TDS API (ОТКУДА БЕРЕТСЯ EQUIP) ===
+print("[2] Загрузка внешнего API экипировки...")
 local TDS = {}
 task.spawn(function()
     local ok, code = pcall(game.HttpGet, game, "https://api.junkie-development.de/api/v1/luascripts/public/57fe397f76043ce06afad24f07528c9f93e97730930242f57134d0b60a2d250b/download")
     if ok then
-        -- Выполняем код и сохраняем результат в TDS
-        local loaded = loadstring(code)
-        if loaded then
-            TDS = loaded() or shared.TDS_Table or {}
-            print("TDS API успешно загружен!")
+        local func = loadstring(code)
+        if func then
+            local result = func()
+            -- Проверяем, где лежит функция Equip
+            TDS = result or shared.TDS_Table or _G.TDS or {}
+            print("[3] API успешно загружено и привязано.")
         end
     else
-        warn("Ошибка загрузки API для экипировки")
+        warn("[!] Ошибка загрузки API. Экипировка может не работать.")
     end
 end)
 
--- === 3. СОЗДАНИЕ ИНТЕРФЕЙСА ===
+-- === ИНТЕРФЕЙС ===
 if PlayerGui:FindFirstChild("TDSAutoStrat") then PlayerGui.TDSAutoStrat:Destroy() end
 
 local gui = Instance.new("ScreenGui")
@@ -60,59 +56,46 @@ gui.Name = "TDSAutoStrat"
 gui.ResetOnSpawn = false
 gui.Parent = PlayerGui
 
-local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 600, 0, 450)
-mainFrame.Position = UDim2.new(0.5, -300, 0.5, -225)
-mainFrame.BackgroundColor3 = Color3.fromRGB(25, 10, 50)
-mainFrame.Active = true
-mainFrame.Draggable = true
-mainFrame.Parent = gui
+local main = Instance.new("Frame")
+main.Size = UDim2.new(0, 550, 0, 400)
+main.Position = UDim2.new(0.5, -275, 0.5, -200)
+main.BackgroundColor3 = Color3.fromRGB(25, 10, 45)
+main.Active = true
+main.Draggable = true
+main.Parent = gui
 
-local corner = Instance.new("UICorner", mainFrame)
-corner.CornerRadius = UDim.new(0, 12)
-
-local stroke = Instance.new("UIStroke", mainFrame)
-stroke.Thickness = 3
-stroke.Color = Color3.fromRGB(180, 50, 255)
-
--- Кнопка закрытия
-local closeBtn = Instance.new("TextButton", mainFrame)
-closeBtn.Text = "X"
-closeBtn.Size = UDim2.new(0, 35, 0, 35)
-closeBtn.Position = UDim2.new(1, -40, 0, 5)
-closeBtn.BackgroundColor3 = Color3.fromRGB(150, 0, 70)
-closeBtn.TextColor3 = Color3.new(1, 1, 1)
-Instance.new("UICorner", closeBtn)
-closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 15)
+local strk = Instance.new("UIStroke", main)
+strk.Thickness = 3
+strk.Color = Color3.fromRGB(180, 80, 255)
 
 -- Вкладки
-local contentFrame = Instance.new("Frame", mainFrame)
-contentFrame.Size = UDim2.new(1, -20, 1, -120)
-contentFrame.Position = UDim2.new(0, 10, 0, 100)
+local contentFrame = Instance.new("Frame", main)
+contentFrame.Size = UDim2.new(1, -20, 1, -110)
+contentFrame.Position = UDim2.new(0, 10, 0, 90)
 contentFrame.BackgroundTransparency = 1
 
 local contents = {}
-local tabContainer = Instance.new("Frame", mainFrame)
-tabContainer.Size = UDim2.new(1, -20, 0, 40)
-tabContainer.Position = UDim2.new(0, 10, 0, 50)
-tabContainer.BackgroundTransparency = 1
-
-local layout = Instance.new("UIListLayout", tabContainer)
+local tabHolder = Instance.new("Frame", main)
+tabHolder.Size = UDim2.new(1, -20, 0, 40)
+tabHolder.Position = UDim2.new(0, 10, 0, 40)
+tabHolder.BackgroundTransparency = 1
+local layout = Instance.new("UIListLayout", tabHolder)
 layout.FillDirection = Enum.FillDirection.Horizontal
-layout.Padding = UDim.new(0, 5)
+layout.Padding = UDim.new(0, 8)
 
-local names = {"Главная", "Стратегии", "Настройки", "Discord"}
-for i, n in ipairs(names) do
+local names = {"Инфо", "Стратегии", "Настройки", "Discord"}
+for i, name in ipairs(names) do
     local f = Instance.new("Frame", contentFrame)
     f.Size = UDim2.new(1, 0, 1, 0)
     f.BackgroundTransparency = 1
     f.Visible = (i == 1)
     contents[i] = f
 
-    local b = Instance.new("TextButton", tabContainer)
-    b.Size = UDim2.new(0, 140, 1, 0)
-    b.Text = n
-    b.BackgroundColor3 = Color3.fromRGB(60, 20, 120)
+    local b = Instance.new("TextButton", tabHolder)
+    b.Size = UDim2.new(0, 125, 1, 0)
+    b.Text = name
+    b.BackgroundColor3 = Color3.fromRGB(60, 30, 110)
     b.TextColor3 = Color3.new(1,1,1)
     b.Font = Enum.Font.GothamBold
     Instance.new("UICorner", b)
@@ -121,65 +104,72 @@ for i, n in ipairs(names) do
     end)
 end
 
--- === ВКЛАДКА СТРАТЕГИИ (RECORDER + EQUIP) ===
+print("[4] Сборка интерфейса завершена.")
 
--- 1. Кнопка Recorder
-local recBtn = Instance.new("TextButton", contents[2])
-recBtn.Text = "ЗАПУСТИТЬ RECORDER"
-recBtn.Size = UDim2.new(1, -40, 0, 50)
-recBtn.Position = UDim2.new(0, 20, 0, 10)
-recBtn.BackgroundColor3 = Color3.fromRGB(0, 100, 200)
-recBtn.TextColor3 = Color3.new(1,1,1)
-recBtn.Font = Enum.Font.GothamBold
-Instance.new("UICorner", recBtn)
+-- === ВКЛАДКА СТРАТЕГИИ ===
 
-recBtn.MouseButton1Click:Connect(function()
+-- Recorder
+local rec = Instance.new("TextButton", contents[2])
+rec.Text = "Запустить Recorder"
+rec.Size = UDim2.new(1, -40, 0, 50)
+rec.Position = UDim2.new(0, 20, 0, 10)
+rec.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
+rec.TextColor3 = Color3.new(1,1,1)
+rec.Font = Enum.Font.GothamBold
+Instance.new("UICorner", rec)
+rec.MouseButton1Click:Connect(function()
     loadstring(game:HttpGet("https://raw.githubusercontent.com/DuxiiT/tds-recorder/refs/heads/main/recorder.lua"))()
 end)
 
--- 2. Поле поиска (TextBox)
-local inputField = Instance.new("TextBox", contents[2])
-inputField.PlaceholderText = "Введите название башни (напр. Accel)"
-inputField.Size = UDim2.new(1, -40, 0, 50)
-inputField.Position = UDim2.new(0, 20, 0, 80)
-inputField.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-inputField.TextColor3 = Color3.new(1,1,1)
-inputField.Font = Enum.Font.Gotham
-inputField.TextSize = 18
-Instance.new("UICorner", inputField)
+-- Поле ввода названия башни
+local towerInput = Instance.new("TextBox", contents[2])
+towerInput.PlaceholderText = "Введите название башни (напр. Scout)..."
+towerInput.Size = UDim2.new(1, -40, 0, 50)
+towerInput.Position = UDim2.new(0, 20, 0, 80)
+towerInput.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+towerInput.TextColor3 = Color3.new(1,1,1)
+towerInput.Font = Enum.Font.Gotham
+towerInput.TextSize = 18
+Instance.new("UICorner", towerInput)
 
--- 3. Кнопка Экипировать
-local equipBtn = Instance.new("TextButton", contents[2])
-equipBtn.Text = "ЭКИПИРОВАТЬ"
-equipBtn.Size = UDim2.new(1, -40, 0, 60)
-equipBtn.Position = UDim2.new(0, 20, 0, 150)
-equipBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
-equipBtn.TextColor3 = Color3.new(1,1,1)
-equipBtn.Font = Enum.Font.GothamBold
-equipBtn.TextSize = 20
-Instance.new("UICorner", equipBtn)
+-- Кнопка Экипировки
+local equip = Instance.new("TextButton", contents[2])
+equip.Text = "ЭКИПИРОВАТЬ"
+equip.Size = UDim2.new(1, -40, 0, 60)
+equip.Position = UDim2.new(0, 20, 0, 150)
+equip.BackgroundColor3 = Color3.fromRGB(0, 160, 80)
+equip.TextColor3 = Color3.new(1,1,1)
+equip.Font = Enum.Font.GothamBold
+Instance.new("UICorner", equip)
 
-equipBtn.MouseButton1Click:Connect(function()
-    local found = resolveTower(inputField.Text)
-    if found then
-        if TDS and TDS.Equip then
-            local success, err = pcall(function() TDS:Equip(found) end)
+equip.MouseButton1Click:Connect(function()
+    local target = resolveTower(towerInput.Text)
+    if target then
+        -- Пробуем разные способы вызова Equip из API
+        local equipFunc = TDS.Equip or (shared.TDS_Table and shared.TDS_Table.Equip)
+        
+        if equipFunc then
+            local success, err = pcall(function()
+                equipFunc(TDS, target) -- Вызов через двоеточие (TDS:Equip)
+            end)
+            
             if success then
-                inputField.Text = "Экипировано: " .. found
-                -- Связь с рекордером
-                local recordFunc = getgenv and getgenv().__tds_record_equip
-                if type(recordFunc) == "function" then recordFunc(found) end
+                towerInput.Text = "Успешно: " .. target
+                -- Отправка данных рекордеру
+                local rFunc = getgenv and getgenv().__tds_record_equip
+                if type(rFunc) == "function" then rFunc(target) end
             else
-                inputField.Text = "Ошибка API: " .. tostring(err)
+                towerInput.Text = "Ошибка API!"
+                warn("Ошибка Equip:", err)
             end
         else
-            inputField.Text = "API не загружено! Ждите..."
+            towerInput.Text = "API еще загружается..."
         end
     else
-        inputField.Text = "Башня не найдена!"
+        towerInput.Text = "Башня не найдена!"
         task.wait(1)
-        inputField.Text = ""
+        towerInput.Text = ""
     end
 end)
 
-print("TDS Auto-Strat: Интерфейс и Экипировщик готовы!")
+print("[5] Скрипт полностью готов к работе!")
