@@ -1,4 +1,4 @@
--- Main.lua - 4 вкладки + recorder + equip
+-- Main.lua - 4 вкладки + recorder + полноценный equip
 local player = game.Players.LocalPlayer
 local gui = Instance.new("ScreenGui")
 gui.Name = "TDSAutoStrat"
@@ -44,9 +44,7 @@ local closeCorner = Instance.new("UICorner")
 closeCorner.CornerRadius = UDim.new(0, 12)
 closeCorner.Parent = closeBtn
 
-closeBtn.MouseButton1Click:Connect(function()
-    gui:Destroy()
-end)
+closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
 
 -- Панель вкладок
 local tabPanel = Instance.new("Frame")
@@ -83,7 +81,7 @@ local tabTexts = {
     "Основное\nДобро пожаловать!",
     "Стратегии\nRecorder и equip ниже.",
     "Настройки\nПока пусто.",
-    "Discord\nhttps://discord.gg/7gXbJEvadu\n(скопируй вручную)"
+    "Discord\nhttps://discord.gg/7gXbJEvadu"
 }
 
 for i = 1, 4 do
@@ -140,30 +138,39 @@ recorderBtn.MouseButton1Click:Connect(function()
     loadstring(game:HttpGet("https://raw.githubusercontent.com/DuxiiT/tds-recorder/refs/heads/main/recorder.lua"))()
 end)
 
--- Equip в Стратегии
+-- Equip в Стратегии (дропдаун + кнопка)
 local towers = {"Scout","Sniper","Paintballer","Demoman","Hunter","Soldier","Militant","Freezer","Assassin","Shotgunner","Pyromancer","Ace Pilot","Medic","Farm","Rocketeer","Trapper","Military Base","Crook Boss","Electroshocker","Commander","Warden","Cowboy","DJ Booth","Minigunner","Ranger","Pursuit","Gatling Gun","Turret","Mortar","Mercenary Base","Brawler","Necromancer","Accelerator","Engineer","Hacker","Gladiator","Commando","Frost Blaster","Archer","Swarmer","Toxic Gunner","Sledger","Executioner","Elf Camp","Jester","Cryomancer","Hallow Punk","Harvester","Snowballer","Elementalist","Firework Technician","Biologist","Warlock","Spotlight Tech","Mecha Base"}
 
-local selected = towers[1]
+local selectedTower = towers[1]
 
-local towerBtn = Instance.new("TextButton")
-towerBtn.Text = "Башня: " .. selected
-towerBtn.Size = UDim2.new(0, 350, 0, 50)
-towerBtn.Position = UDim2.new(0.5, -175, 0, 180)
-towerBtn.BackgroundColor3 = Color3.fromRGB(90, 0, 160)
-towerBtn.TextColor3 = Color3.new(1,1,1)
-towerBtn.Parent = contents[2]
+local towerLabel = Instance.new("TextLabel")
+towerLabel.Text = "Выбранная башня: " .. selectedTower
+towerLabel.Size = UDim2.new(0, 400, 0, 40)
+towerLabel.Position = UDim2.new(0.5, -200, 0, 180)
+towerLabel.BackgroundTransparency = 1
+towerLabel.TextColor3 = Color3.fromRGB(220, 100, 255)
+towerLabel.TextSize = 22
+towerLabel.Parent = contents[2]
 
-towerBtn.MouseButton1Click:Connect(function()
-    local idx = table.find(towers, selected) or 1
+local nextBtn = Instance.new("TextButton")
+nextBtn.Text = "Следующая башня"
+nextBtn.Size = UDim2.new(0, 200, 0, 50)
+nextBtn.Position = UDim2.new(0.5, -200, 0, 230)
+nextBtn.BackgroundColor3 = Color3.fromRGB(90, 0, 160)
+nextBtn.TextColor3 = Color3.new(1,1,1)
+nextBtn.Parent = contents[2]
+
+nextBtn.MouseButton1Click:Connect(function()
+    local idx = table.find(towers, selectedTower) or 1
     idx = idx % #towers + 1
-    selected = towers[idx]
-    towerBtn.Text = "Башня: " .. selected
+    selectedTower = towers[idx]
+    towerLabel.Text = "Выбранная башня: " .. selectedTower
 end)
 
 local equipBtn = Instance.new("TextButton")
 equipBtn.Text = "Экипировать"
-equipBtn.Size = UDim2.new(0, 250, 0, 50)
-equipBtn.Position = UDim2.new(0.5, -125, 0, 250)
+equipBtn.Size = UDim2.new(0, 200, 0, 50)
+equipBtn.Position = UDim2.new(0.5, 0, 0, 230)
 equipBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 0)
 equipBtn.TextColor3 = Color3.new(1,1,1)
 equipBtn.Parent = contents[2]
@@ -173,8 +180,8 @@ equipBtn.MouseButton1Click:Connect(function()
         print("Только в лобби TDS!")
         return
     end
-    game:GetService("ReplicatedStorage").RemoteEvent:FireServer("Towers", "Equip", selected)
-    print("Экипировано: " .. selected)
+    game:GetService("ReplicatedStorage").RemoteEvent:FireServer("Towers", "Equip", selectedTower)
+    print("Экипировано: " .. selectedTower)
 end)
 
-print("Готово! Всё проверено.")
+print("Equip готов! Выбирай башню кнопкой, потом экипируй.")
