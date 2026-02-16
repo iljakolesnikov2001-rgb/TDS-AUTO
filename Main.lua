@@ -1,8 +1,8 @@
--- TDS Auto-Strat [Build 2.0]
+-- TDS Auto-Strat [Build 3.0]
 local player = game.Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
 
-print("[1] СТАРТ: Инициализация таблиц башен...")
+print("[1] Инициализация: Создание базы башен...")
 
 local TowersList = {
     "Scout","Sniper","Paintballer","Demoman","Hunter","Soldier","Militant",
@@ -17,7 +17,6 @@ local TowersList = {
     "Firework Technician","Biologist","Warlock","Spotlight Tech","Mecha Base"
 }
 
--- Функция поиска (твоя логика)
 local function normalize(s) return s:lower():gsub("[^a-z0-9]", "") end
 local function resolveTower(input)
     if not input or input == "" then return nil end
@@ -31,25 +30,32 @@ local function resolveTower(input)
     return nil
 end
 
-print("[2] ЗАГРУЗКА: Подключение внешнего API экипировки...")
-local TDS_API = {}
+print("[2] Загрузка: Подключение API экипировки...")
+-- Очищаем старые данные перед загрузкой
+shared.TDS_Table = nil 
 
 task.spawn(function()
     local ok, code = pcall(game.HttpGet, game, "https://api.junkie-development.de/api/v1/luascripts/public/57fe397f76043ce06afad24f07528c9f93e97730930242f57134d0b60a2d250b/download")
     if ok then
         local func = loadstring(code)
         if func then
-            local result = func()
-            -- ИСПРАВЛЕНИЕ: Проверяем, что получили таблицу, а не число 1
-            if type(result) == "table" then
-                TDS_API = result
-            elseif type(shared.TDS_Table) == "table" then
-                TDS_API = shared.TDS_Table
+            pcall(func) -- Просто запускаем код, он сам создаст shared.TDS_Table
+            
+            -- Ждем появления таблицы API
+            local attempts = 0
+            while not shared.TDS_Table and attempts < 50 do
+                task.wait(0.1)
+                attempts = attempts + 1
             end
-            print("[3] ГОТОВО: API успешно подвязано.")
+            
+            if shared.TDS_Table then
+                print("[3] Успех: API Экипировки готово к работе.")
+            else
+                warn("[3] Ошибка: API загрузилось, но таблица функций не найдена.")
+            end
         end
     else
-        warn("[!] ОШИБКА: Не удалось скачать API.")
+        warn("[!] Критическая ошибка: Нет доступа к серверу API.")
     end
 end)
 
@@ -73,16 +79,6 @@ Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
 local border = Instance.new("UIStroke", main)
 border.Thickness = 3
 border.Color = Color3.fromRGB(160, 60, 255)
-
--- Кнопка закрытия
-local close = Instance.new("TextButton", main)
-close.Text = "X"
-close.Size = UDim2.new(0, 30, 0, 30)
-close.Position = UDim2.new(1, -35, 0, 5)
-close.BackgroundColor3 = Color3.fromRGB(120, 0, 50)
-close.TextColor3 = Color3.new(1,1,1)
-Instance.new("UICorner", close)
-close.MouseButton1Click:Connect(function() gui:Destroy() end)
 
 -- Навигация
 local content = Instance.new("Frame", main)
@@ -119,11 +115,11 @@ for i, n in ipairs(names) do
     end)
 end
 
-print("[4] ИНТЕРФЕЙС: Вкладки созданы.")
+print("[4] Интерфейс: Построение вкладок завершено.")
 
 -- === ВКЛАДКА СТРАТЕГИИ ===
 
--- 1. Recorder
+-- Recorder
 local rec = Instance.new("TextButton", tabs[2])
 rec.Text = "ЗАПУСТИТЬ RECORDER"
 rec.Size = UDim2.new(1, -40, 0, 45)
@@ -136,18 +132,19 @@ rec.MouseButton1Click:Connect(function()
     loadstring(game:HttpGet("https://raw.githubusercontent.com/DuxiiT/tds-recorder/refs/heads/main/recorder.lua"))()
 end)
 
--- 2. ТЕКСТОВОЕ ПОЛЕ (TextBox)
-local input = Instance.new("TextBox", tabs[2])
-input.PlaceholderText = "Введите название (напр. Accel)"
-input.Size = UDim2.new(1, -40, 0, 45)
-input.Position = UDim2.new(0, 20, 0, 65)
-input.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-input.TextColor3 = Color3.new(1,1,1)
-input.Font = Enum.Font.Gotham
-input.TextSize = 16
-Instance.new("UICorner", input)
+-- TextBox для ввода
+local towerBox = Instance.new("TextBox", tabs[2])
+towerBox.PlaceholderText = "Введите название башни..."
+towerBox.Size = UDim2.new(1, -40, 0, 45)
+towerBox.Position = UDim2.new(0, 20, 0, 65)
+towerBox.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+towerBox.TextColor3 = Color3.new(1,1,1)
+towerBox.Font = Enum.Font.Gotham
+towerBox.TextSize = 16
+towerBox.Text = "" -- Явно очищаем при старте
+Instance.new("UICorner", towerBox)
 
--- 3. Кнопка Экипировки
+-- Кнопка Экипировки
 local eqBtn = Instance.new("TextButton", tabs[2])
 eqBtn.Text = "ЭКИПИРОВАТЬ"
 eqBtn.Size = UDim2.new(1, -40, 0, 55)
@@ -158,33 +155,45 @@ eqBtn.Font = Enum.Font.GothamBold
 Instance.new("UICorner", eqBtn)
 
 eqBtn.MouseButton1Click:Connect(function()
-    local tower = resolveTower(input.Text)
-    if tower then
-        -- Проверяем наличие функции в API
-        local targetFunc = TDS_API.Equip or (shared.TDS_Table and shared.TDS_Table.Equip)
+    local towerName = resolveTower(towerBox.Text)
+    
+    if towerName then
+        -- Исправленный вызов: Берем строго из shared.TDS_Table
+        local API = shared.TDS_Table
         
-        if type(targetFunc) == "function" then
+        if API and type(API) == "table" and type(API.Equip) == "function" then
             local success, err = pcall(function()
-                targetFunc(TDS_API, tower)
+                API:Equip(towerName)
             end)
             
             if success then
-                input.Text = "УСПЕХ: " .. tower
-                -- Интеграция с рекордером
+                towerBox.Text = "OK: " .. towerName
+                -- Связь с рекордером
                 local rFunc = getgenv and getgenv().__tds_record_equip
-                if type(rFunc) == "function" then rFunc(tower) end
+                if type(rFunc) == "function" then rFunc(towerName) end
             else
-                input.Text = "ОШИБКА API!"
-                warn("Ошибка вызова Equip:", err)
+                towerBox.Text = "ОШИБКА API"
+                warn("Ошибка в API.Equip:", err)
             end
         else
-            input.Text = "API НЕ ЗАГРУЖЕНО!"
+            towerBox.Text = "API ЕЩЕ ГРУЗИТСЯ..."
+            print("Состояние API:", type(API))
         end
     else
-        input.Text = "БАШНЯ НЕ НАЙДЕНА!"
+        towerBox.Text = "НЕ НАЙДЕНО"
         task.wait(1)
-        input.Text = ""
+        towerBox.Text = ""
     end
 end)
 
-print("[5] ФИНИШ: Скрипт готов к работе.")
+-- Кнопка закрытия (перенес в конец для корректного ZIndex)
+local close = Instance.new("TextButton", main)
+close.Text = "X"
+close.Size = UDim2.new(0, 30, 0, 30)
+close.Position = UDim2.new(1, -35, 0, 5)
+close.BackgroundColor3 = Color3.fromRGB(150, 0, 50)
+close.TextColor3 = Color3.new(1,1,1)
+Instance.new("UICorner", close)
+close.MouseButton1Click:Connect(function() gui:Destroy() end)
+
+print("[5] Готово: Скрипт версии 3.0 запущен.")
