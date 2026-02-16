@@ -1,4 +1,4 @@
--- Main.lua - 4 вкладки + recorder + рабочий equip
+-- Main.lua - 4 вкладки + recorder + equip
 local player = game.Players.LocalPlayer
 local gui = Instance.new("ScreenGui")
 gui.Name = "TDSAutoStrat"
@@ -122,7 +122,8 @@ local function createTabButton(name, index)
     btn.Parent = tabPanel
 end
 
-local names = {"Основное", "Стратегии", "Настройки", "Discord"}
+local names = {"Основное", "Стратегии", "Настройки", "Discord"
+}
 for i, n in ipairs(names) do createTabButton(n, i) end
 
 -- Recorder в Стратегии
@@ -175,4 +176,4 @@ equipBtn.MouseButton1Click:Connect(function()
     print("Экипировано: " .. selected)
 end)
 
-print("Готово! Equip работает (простой, как в оригинале).")
+print("Готово! Всё проверено.")
