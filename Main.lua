@@ -1,4 +1,4 @@
--- Main.lua - Только простой интерфейс
+-- Main.lua - Простой интерфейс (работает: двигается, закрывается)
 local player = game.Players.LocalPlayer
 local gui = Instance.new("ScreenGui")
 gui.Name = "TDSAutoStrat"
@@ -9,8 +9,6 @@ mainFrame.Size = UDim2.new(0, 550, 0, 420)
 mainFrame.Position = UDim2.new(0.5, -275, 0.5, -210)
 mainFrame.BackgroundColor3 = Color3.fromRGB(20, 0, 45)
 mainFrame.BorderSizePixel = 0
-mainFrame.Active = true
-mainFrame.Draggable = true  -- двигается
 mainFrame.Parent = gui
 
 local corner = Instance.new("UICorner")
@@ -22,7 +20,7 @@ stroke.Thickness = 4
 stroke.Color = Color3.fromRGB(200, 80, 255)
 stroke.Parent = mainFrame
 
--- Заголовок
+-- Заголовок (для драга)
 local title = Instance.new("TextLabel")
 title.Text = "TDS Auto-Strat"
 title.Size = UDim2.new(1, -60, 0, 60)
@@ -49,9 +47,40 @@ closeBtn.MouseButton1Click:Connect(function()
     gui:Destroy()
 end)
 
--- Текст
+-- Ручной драг по заголовку
+local dragging = false
+local dragInput, dragStart, startPos
+
+title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = mainFrame.Position
+    end
+end)
+
+title.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement then
+        dragInput = input
+    end
+end)
+
+game:GetService("UserInputService").InputChanged:Connect(function(input)
+    if dragging and input == dragInput then
+        local delta = input.Position - dragStart
+        mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+title.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = false
+    end
+end)
+
+-- Тест текст
 local testLabel = Instance.new("TextLabel")
-testLabel.Text = "Меню работает!\nДвигай за фон.\nКликни X для закрытия."
+testLabel.Text = "Меню работает!\nДвигай за заголовок.\nКликни X для закрытия."
 testLabel.Size = UDim2.new(1, -20, 1, -80)
 testLabel.Position = UDim2.new(0, 10, 0, 70)
 testLabel.BackgroundTransparency = 1
@@ -60,4 +89,4 @@ testLabel.TextSize = 24
 testLabel.TextWrapped = true
 testLabel.Parent = mainFrame
 
-print("Простой UI готов!")
+print("Интерфейс готов!")
