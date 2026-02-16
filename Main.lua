@@ -5,8 +5,8 @@ gui.Name = "TDSAutoStrat"
 gui.Parent = player:WaitForChild("PlayerGui")
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 550, 0, 420)
-mainFrame.Position = UDim2.new(0.5, -275, 0.5, -210)
+mainFrame.Size = UDim2.new(0, 600, 0, 450)
+mainFrame.Position = UDim2.new(0.5, -300, 0.5, -225)
 mainFrame.BackgroundColor3 = Color3.fromRGB(20, 0, 45)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
@@ -79,8 +79,8 @@ end
 
 -- Текст для вкладок
 local tabTexts = {
-    "Основное\nДобро пожаловать!\nЗдесь основная информация.",
-    "Стратегии\nПока пусто — добавим функции.",
+    "Основное\nДобро пожаловать в TDS Auto-Strat!",
+    "Стратегии\nЗдесь будут стратегии и recorder.",
     "Настройки\nПока пусто.",
     "Discord\nПрисоединяйся:\nhttps://discord.gg/7gXbJEvadu"
 }
