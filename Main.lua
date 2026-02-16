@@ -1,4 +1,4 @@
--- Main.lua - Только интерфейс
+-- Main.lua - Полностью рабочий
 local player = game.Players.LocalPlayer
 local gui = Instance.new("ScreenGui")
 gui.Name = "TDSAutoStrat"
@@ -9,6 +9,8 @@ mainFrame.Size = UDim2.new(0, 550, 0, 420)
 mainFrame.Position = UDim2.new(0.5, -275, 0.5, -210)
 mainFrame.BackgroundColor3 = Color3.fromRGB(20, 0, 45)
 mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true  -- теперь двигается!
 mainFrame.Parent = gui
 
 local corner = Instance.new("UICorner")
@@ -20,6 +22,7 @@ stroke.Thickness = 4
 stroke.Color = Color3.fromRGB(200, 80, 255)
 stroke.Parent = mainFrame
 
+-- Заголовок
 local title = Instance.new("TextLabel")
 title.Text = "TDS Auto-Strat"
 title.Size = UDim2.new(1, -60, 0, 60)
@@ -29,6 +32,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 28
 title.Parent = mainFrame
 
+-- Закрытие
 local closeBtn = Instance.new("TextButton")
 closeBtn.Text = "X"
 closeBtn.Size = UDim2.new(0, 50, 0, 50)
@@ -43,8 +47,6 @@ closeCorner.Parent = closeBtn
 
 closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
 
--- Перетаскивание и ресайз (полный код из предыдущей рабочей версии — скопируй его сюда, если нужно)
-
 -- Контент
 local content = Instance.new("Frame")
 content.Size = UDim2.new(1, -20, 1, -100)
@@ -52,7 +54,7 @@ content.Position = UDim2.new(0, 10, 0, 80)
 content.BackgroundTransparency = 1
 content.Parent = mainFrame
 
--- Кнопки вызова функций из Library
+-- Recorder кнопка
 local recorderBtn = Instance.new("TextButton")
 recorderBtn.Text = "Запустить Recorder"
 recorderBtn.Size = UDim2.new(0, 400, 0, 60)
@@ -62,19 +64,44 @@ recorderBtn.TextColor3 = Color3.new(1,1,1)
 recorderBtn.Parent = content
 
 recorderBtn.MouseButton1Click:Connect(function()
-    Library:StartRecorder()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/DuxiiT/tds-recorder/refs/heads/main/recorder.lua"))()
+end)
+
+-- Equip кнопки
+local towers = {"Scout","Sniper","Paintballer","Demoman","Hunter","Soldier","Militant","Freezer","Assassin","Shotgunner","Pyromancer","Ace Pilot","Medic","Farm","Rocketeer","Trapper","Military Base","Crook Boss","Electroshocker","Commander","Warden","Cowboy","DJ Booth","Minigunner","Ranger","Pursuit","Gatling Gun","Turret","Mortar","Mercenary Base","Brawler","Necromancer","Accelerator","Engineer","Hacker","Gladiator","Commando","Frost Blaster","Archer","Swarmer","Toxic Gunner","Sledger","Executioner","Elf Camp","Jester","Cryomancer","Hallow Punk","Harvester","Snowballer","Elementalist","Firework Technician","Biologist","Warlock","Spotlight Tech","Mecha Base"}
+
+local selected = towers[1]
+
+local towerBtn = Instance.new("TextButton")
+towerBtn.Text = "Башня: " .. selected
+towerBtn.Size = UDim2.new(0, 350, 0, 50)
+towerBtn.Position = UDim2.new(0.5, -175, 0, 100)
+towerBtn.BackgroundColor3 = Color3.fromRGB(90, 0, 160)
+towerBtn.TextColor3 = Color3.new(1,1,1)
+towerBtn.Parent = content
+
+towerBtn.MouseButton1Click:Connect(function()
+    local idx = table.find(towers, selected) or 1
+    idx = idx % #towers + 1
+    selected = towers[idx]
+    towerBtn.Text = "Башня: " .. selected
 end)
 
 local equipBtn = Instance.new("TextButton")
-equipBtn.Text = "Экипировать башню"
-equipBtn.Size = UDim2.new(0, 400, 0, 60)
-equipBtn.Position = UDim2.new(0.5, -200, 0, 100)
+equipBtn.Text = "Экипировать"
+equipBtn.Size = UDim2.new(0, 250, 0, 50)
+equipBtn.Position = UDim2.new(0.5, -125, 0, 170)
 equipBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 0)
 equipBtn.TextColor3 = Color3.new(1,1,1)
 equipBtn.Parent = content
 
 equipBtn.MouseButton1Click:Connect(function()
-    Library:EquipTower()
+    if game.PlaceId ~= 3260590327 then
+        print("Только в лобби TDS!")
+        return
+    end
+    game:GetService("ReplicatedStorage").RemoteEvent:FireServer("Towers", "Equip", selected)
+    print("Экипировано: " .. selected)
 end)
 
-print("Интерфейс загружен! Функции в Library.lua")
+print("Меню готово! Двигается, кнопки работают.")
