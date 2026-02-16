@@ -1,4 +1,4 @@
--- Main.lua - Простой интерфейс (работает: двигается, закрывается)
+-- Main.lua - Простой интерфейс с 4 вкладками
 local player = game.Players.LocalPlayer
 local gui = Instance.new("ScreenGui")
 gui.Name = "TDSAutoStrat"
@@ -9,6 +9,8 @@ mainFrame.Size = UDim2.new(0, 550, 0, 420)
 mainFrame.Position = UDim2.new(0.5, -275, 0.5, -210)
 mainFrame.BackgroundColor3 = Color3.fromRGB(20, 0, 45)
 mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
 mainFrame.Parent = gui
 
 local corner = Instance.new("UICorner")
@@ -20,7 +22,7 @@ stroke.Thickness = 4
 stroke.Color = Color3.fromRGB(200, 80, 255)
 stroke.Parent = mainFrame
 
--- Заголовок (для драга)
+-- Заголовок
 local title = Instance.new("TextLabel")
 title.Text = "TDS Auto-Strat"
 title.Size = UDim2.new(1, -60, 0, 60)
@@ -43,50 +45,85 @@ local closeCorner = Instance.new("UICorner")
 closeCorner.CornerRadius = UDim.new(0, 12)
 closeCorner.Parent = closeBtn
 
-closeBtn.MouseButton1Click:Connect(function()
-    gui:Destroy()
-end)
+closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
 
--- Ручной драг по заголовку
-local dragging = false
-local dragInput, dragStart, startPos
+-- Панель вкладок
+local tabPanel = Instance.new("Frame")
+tabPanel.Size = UDim2.new(1, -20, 0, 60)
+tabPanel.Position = UDim2.new(0, 10, 0, 60)
+tabPanel.BackgroundTransparency = 1
+tabPanel.Parent = mainFrame
 
-title.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = true
-        dragStart = input.Position
-        startPos = mainFrame.Position
-    end
-end)
+local tabLayout = Instance.new("UIListLayout")
+tabLayout.FillDirection = Enum.FillDirection.Horizontal
+tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+tabLayout.Padding = UDim.new(0, 15)
+tabLayout.Parent = tabPanel
 
-title.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement then
-        dragInput = input
-    end
-end)
+-- Контент
+local contentFrame = Instance.new("Frame")
+contentFrame.Size = UDim2.new(1, -20, 1, -130)
+contentFrame.Position = UDim2.new(0, 10, 0, 120)
+contentFrame.BackgroundTransparency = 1
+contentFrame.Parent = mainFrame
 
-game:GetService("UserInputService").InputChanged:Connect(function(input)
-    if dragging and input == dragInput then
-        local delta = input.Position - dragStart
-        mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end
-end)
+local contents = {}
+for i = 1, 4 do
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(1, 0, 1, 0)
+    f.BackgroundTransparency = 1
+    f.Visible = (i == 1)
+    f.Parent = contentFrame
+    contents[i] = f
+end
 
-title.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = false
-    end
-end)
+-- Текст для вкладок
+local tabTexts = {
+    "Основное\nДобро пожаловать!\nЗдесь основная информация.",
+    "Стратегии\nПока пусто — добавим позже.",
+    "Настройки\nПока пусто.",
+    "Discord\nПрисоединяйся к каналу:\nhttps://discord.gg/7gXbJEvadu"
+}
 
--- Тест текст
-local testLabel = Instance.new("TextLabel")
-testLabel.Text = "Меню работает!\nДвигай за заголовок.\nКликни X для закрытия."
-testLabel.Size = UDim2.new(1, -20, 1, -80)
-testLabel.Position = UDim2.new(0, 10, 0, 70)
-testLabel.BackgroundTransparency = 1
-testLabel.TextColor3 = Color3.fromRGB(220, 100, 255)
-testLabel.TextSize = 24
-testLabel.TextWrapped = true
-testLabel.Parent = mainFrame
+for i = 1, 4 do
+    local lbl = Instance.new("TextLabel")
+    lbl.Text = tabTexts[i]
+    lbl.TextColor3 = Color3.fromRGB(220, 100, 255)
+    lbl.BackgroundTransparency = 1
+    lbl.TextSize = 22
+    lbl.TextWrapped = true
+    lbl.TextYAlignment = Enum.TextYAlignment.Top
+    lbl.Size = UDim2.new(1, 0, 1, 0)
+    lbl.Parent = contents[i]
+end
 
-print("Интерфейс готов!")
+-- Кнопки вкладок
+local function createTabButton(name, index)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0.22, 0, 1, -10)
+    btn.BackgroundColor3 = Color3.fromRGB(90, 0, 160)
+    btn.TextColor3 = Color3.new(1,1,1)
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 18
+    btn.Text = name
+
+    local bc = Instance.new("UICorner")
+    bc.CornerRadius = UDim.new(0, 12)
+    bc.Parent = btn
+
+    local bs = Instance.new("UIStroke")
+    bs.Thickness = 2
+    bs.Color = Color3.fromRGB(220, 100, 255)
+    bs.Parent = btn
+
+    btn.MouseButton1Click:Connect(function()
+        for j = 1, 4 do contents[j].Visible = (j == index) end
+    end)
+
+    btn.Parent = tabPanel
+end
+
+local names = {"Основное", "Стратегии", "Настройки", "Discord"}
+for i, n in ipairs(names) do createTabButton(n, i) end
+
+print("Интерфейс с 4 вкладками готов!")
