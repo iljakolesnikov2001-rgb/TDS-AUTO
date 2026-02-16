@@ -78,7 +78,7 @@ end
 
 -- Текст для вкладок
 local tabTexts = {
-    "Основное\nДобро пожаловать!",
+    "Основное\nДобр пожаловать!",
     "Стратегии\nRecorder и equip ниже.",
     "Настройки\nПока пусто.",
     "Discord\nhttps://discord.gg/7gXbJEvadu"
