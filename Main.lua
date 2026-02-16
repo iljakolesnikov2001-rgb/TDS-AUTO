@@ -4,7 +4,7 @@ local gui = Instance.new("ScreenGui")
 gui.Name = "TDSAutoStrat"
 gui.Parent = player:WaitForChild("PlayerGui")
 
-local main yourFrame = Instance.new("Frame")
+local mainFrame = Instance.new("Frame")
 mainFrame.Size = UDim2.new(0, 600, 0, 450)
 mainFrame.Position = UDim2.new(0.5, -300, 0.5, -225)
 mainFrame.BackgroundColor3 = Color3.fromRGB(20, 0, 45)
@@ -78,7 +78,7 @@ end
 
 -- Текст для вкладок
 local tabTexts = {
-    "Основное\nДобр пожаловать!",
+    "Основное\nДобро пожаловать!",
     "Стратегии\nRecorder и equip ниже.",
     "Настройки\nПока пусто.",
     "Discord\nhttps://discord.gg/7gXbJEvadu"
@@ -138,7 +138,7 @@ recorderBtn.MouseButton1Click:Connect(function()
     loadstring(game:HttpGet("https://raw.githubusercontent.com/DuxiiT/tds-recorder/refs/heads/main/recorder.lua"))()
 end)
 
--- Equip в Стратегии (починил твой код, убрал ключ, добавил нормализацию)
+-- Equip в Стратегии (твой код, починил)
 local Towers = {"Scout","Sniper","Paintballer","Demoman","Hunter","Soldier","Militant","Freezer","Assassin","Shotgunner","Pyromancer","Ace Pilot","Medic","Farm","Rocketeer","Trapper","Military Base","Crook Boss","Electroshocker","Commander","Warden","Cowboy","DJ Booth","Minigunner","Ranger","Pursuit","Gatling Gun","Turret","Mortar","Mercenary Base","Brawler","Necromancer","Accelerator","Engineer","Hacker","Gladiator","Commando","Slasher","Frost Blaster","Archer","Swarmer","Toxic Gunner","Sledger","Executioner","Elf Camp","Jester","Cryomancer","Hallow Punk","Harvester","Snowballer","Elementalist","Firework Technician","Biologist","Warlock","Spotlight Tech","Mecha Base"}
 
 local function normalize(s)
@@ -170,7 +170,7 @@ local function resolveTower(input)
     end
 end
 
--- Текстбокс для ввода имени башни
+-- Textbox для ввода
 local textbox = Instance.new("TextBox")
 textbox.PlaceholderText = "Введи имя башни (можно частично)"
 textbox.Size = UDim2.new(0, 400, 0, 50)
@@ -200,4 +200,4 @@ textbox.FocusLost:Connect(function(enterPressed)
     textbox.Text = ""
 end)
 
-print("Equip готов! Введи имя башни (можно частично, без пробелов), нажми Enter.")
+print("Equip готов! Введи имя башни (можно частично), Enter.")
