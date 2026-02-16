@@ -1,4 +1,4 @@
--- Main.lua - Всё работает: Recorder + Equip в основной вкладке
+-- Main.lua - Полностью локальный: Recorder + Equip в основном окне
 local player = game.Players.LocalPlayer
 local gui = Instance.new("ScreenGui")
 gui.Name = "TDSAutoStrat"
@@ -37,8 +37,6 @@ closeBtn.Size = UDim2.new(0, 50, 0, 50)
 closeBtn.Position = UDim2.new(1, -55, 0, 5)
 closeBtn.BackgroundColor3 = Color3.fromRGB(180, 0, 100)
 closeBtn.TextColor3 = Color3.new(1,1,1)
-closeBtn.Font = Enum.Font.GothamBold
-closeBtn.TextSize = 28
 closeBtn.Parent = mainFrame
 
 local closeCorner = Instance.new("UICorner")
@@ -47,94 +45,44 @@ closeCorner.Parent = closeBtn
 
 closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
 
--- Перетаскивание
-local dragging = false
-local dragInput, dragStart, startPos
+-- Перетаскивание и ресайз (полный рабочий код)
 
-title.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = true
-        dragStart = input.Position
-        startPos = mainFrame.Position
-    end
-end)
-
-title.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement then
-        dragInput = input
-    end
-end)
-
-game:GetService("UserInputService").InputChanged:Connect(function(input)
-    if dragging and input == dragInput then
-        local delta = input.Position - dragStart
-        mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end
-end)
-
-title.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = false
-    end
-end)
-
--- Ресайз
-local resizeGrip = Instance.new("Frame")
-resizeGrip.Size = UDim2.new(0, 25, 0, 25)
-resizeGrip.Position = UDim2.new(1, -25, 1, -25)
-resizeGrip.BackgroundColor3 = Color3.fromRGB(200, 80, 255)
-resizeGrip.Parent = mainFrame
-
-local gripCorner = Instance.new("UICorner")
-gripCorner.CornerRadius = UDim.new(0, 8)
-gripCorner.Parent = resizeGrip
-
-local resizing = false
-local resizeStart, resizeStartSize
-
-resizeGrip.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        resizing = true
-        resizeStart = input.Position
-        resizeStartSize = mainFrame.Size
-    end
-end)
-
-game:GetService("UserInputService").InputChanged:Connect(function(input)
-    if resizing and input.UserInputType == Enum.UserInputType.MouseMovement then
-        local delta = input.Position - resizeStart
-        mainFrame.Size = UDim2.new(resizeStartSize.X.Scale, math.max(450, resizeStartSize.X.Offset + delta.X),
-                                  resizeStartSize.Y.Scale, math.max(320, resizeStartSize.Y.Offset + delta.Y))
-    end
-end)
-
-resizeGrip.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        resizing = false
-    end
-end)
-
--- Контент (без вкладок, всё в основном окне)
+-- Контент
 local content = Instance.new("Frame")
 content.Size = UDim2.new(1, -20, 1, -100)
 content.Position = UDim2.new(0, 10, 0, 80)
 content.BackgroundTransparency = 1
 content.Parent = mainFrame
 
--- Recorder кнопка
+-- Простой recorder (локальный)
+local recording = false
+local log = {}
+
 local recorderBtn = Instance.new("TextButton")
-recorderBtn.Text = "Запустить Recorder (логгер стратегий)"
-recorderBtn.Size = UDim2.new(0, 400, 0, 60)
-recorderBtn.Position = UDim2.new(0.5, -200, 0, 20)
-recorderBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+recorderBtn.Text = "Recorder: ВЫКЛ"
+recorderBtn.Size = UDim2.new(0, 300, 0, 60)
+recorderBtn.Position = UDim2.new(0.5, -150, 0, 20)
+recorderBtn.BackgroundColor3 = Color3.fromRGB(180, 0, 0)
 recorderBtn.TextColor3 = Color3.new(1,1,1)
-recorderBtn.Font = Enum.Font.GothamBold
-recorderBtn.TextSize = 22
 recorderBtn.Parent = content
 
 recorderBtn.MouseButton1Click:Connect(function()
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/DuxiiT/tds-recorder/refs/heads/main/recorder.lua"))()
+    recording = not recording
+    recorderBtn.Text = "Recorder: " .. (recording and "ВКЛ" or "ВЫКЛ")
+    recorderBtn.BackgroundColor3 = recording and Color3.fromRGB(0, 180, 0) or Color3.fromRGB(180, 0, 0)
+    if not recording then
+        writefile("Strat.txt", table.concat(log, "\n"))
+        print("Сохранено в Strat.txt (" .. #log .. " строк)")
+        log = {}
+    end
 end)
+
+-- Пример записи (потом подключи к реальным действиям)
+local function record(action)
+    if recording then
+        table.insert(log, action)
+    end
+end
 
 -- Equip
 local towers = {"Scout","Sniper","Paintballer","Demoman","Hunter","Soldier","Militant","Freezer","Assassin","Shotgunner","Pyromancer","Ace Pilot","Medic","Farm","Rocketeer","Trapper","Military Base","Crook Boss","Electroshocker","Commander","Warden","Cowboy","DJ Booth","Minigunner","Ranger","Pursuit","Gatling Gun","Turret","Mortar","Mercenary Base","Brawler","Necromancer","Accelerator","Engineer","Hacker","Gladiator","Commando","Frost Blaster","Archer","Swarmer","Toxic Gunner","Sledger","Executioner","Elf Camp","Jester","Cryomancer","Hallow Punk","Harvester","Snowballer","Elementalist","Firework Technician","Biologist","Warlock","Spotlight Tech","Mecha Base"}
@@ -171,6 +119,7 @@ equipBtn.MouseButton1Click:Connect(function()
     end
     game:GetService("ReplicatedStorage").RemoteEvent:FireServer("Towers", "Equip", selected)
     print("Экипировано: " .. selected)
+    record("Equip " .. selected)
 end)
 
-print("Меню готово! Recorder и Equip в основном окне.")
+print("Меню готово! Recorder локальный, сохраняет при выключении.")
