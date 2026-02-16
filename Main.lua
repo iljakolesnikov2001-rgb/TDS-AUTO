@@ -1,4 +1,4 @@
--- Main.lua - Интерфейс с 4 вкладками, Discord ссылка кликабельная
+-- Main.lua - Интерфейс с 4 вкладками, Discord ссылка копируется кликом
 local player = game.Players.LocalPlayer
 local gui = Instance.new("ScreenGui")
 gui.Name = "TDSAutoStrat"
@@ -81,8 +81,7 @@ end
 local tabTexts = {
     "Основное\nДобро пожаловать в TDS Auto-Strat!",
     "Стратегии\nЗдесь будут стратегии и recorder.",
-    "Настройки\nПока пусто.",
-    "Discord\nПрисоединяйся в наш сервер:"
+    "Настройки\nПока пусто."
 }
 
 for i = 1, 3 do
@@ -97,16 +96,21 @@ for i = 1, 3 do
     lbl.Parent = contents[i]
 end
 
--- Кликабельная ссылка в Discord вкладке
+-- Discord вкладка с кликабельной ссылкой
 local discordLabel = Instance.new("TextLabel")
-discordLabel.Text = '<a href="https://discord.gg/7gXbJEvadu">https://discord.gg/7gXbJEvadu</a>'
+discordLabel.Text = "Присоединяйся в сервер:\nhttps://discord.gg/7gXbJEvadu\n(Кликни для копирования)"
 discordLabel.RichText = true
-discordLabel.TextColor3 = Color3.fromRGB(114, 137, 218)  -- синий для ссылки
+discordLabel.TextColor3 = Color3.fromRGB(114, 137, 218)  -- синий цвет ссылки
 discordLabel.BackgroundTransparency = 1
 discordLabel.TextSize = 24
 discordLabel.TextWrapped = true
 discordLabel.Size = UDim2.new(1, 0, 1, 0)
 discordLabel.Parent = contents[4]
+
+discordLabel.MouseButton1Click:Connect(function()
+    setclipboard("https://discord.gg/7gXbJEvadu")
+    print("Ссылка скопирована в буфер обмена!")
+end)
 
 -- Кнопки вкладок
 local function createTabButton(name, index)
@@ -137,4 +141,4 @@ end
 local names = {"Основное", "Стратегии", "Настройки", "Discord"}
 for i, n in ipairs(names) do createTabButton(n, i) end
 
-print("Ссылка в Discord вкладке кликабельная!")
+print("Ссылка кликабельная (копирует в буфер)!")
