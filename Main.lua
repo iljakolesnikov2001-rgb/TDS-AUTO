@@ -1,4 +1,4 @@
--- Main.lua - Интерфейс с 4 вкладками
+-- Main.lua - Интерфейс с 4 вкладками, Discord ссылка кликабельная
 local player = game.Players.LocalPlayer
 local gui = Instance.new("ScreenGui")
 gui.Name = "TDSAutoStrat"
@@ -82,10 +82,10 @@ local tabTexts = {
     "Основное\nДобро пожаловать в TDS Auto-Strat!",
     "Стратегии\nЗдесь будут стратегии и recorder.",
     "Настройки\nПока пусто.",
-    "Discord\nПрисоединяйся:\nhttps://discord.gg/7gXbJEvadu"
+    "Discord\nПрисоединяйся в наш сервер:"
 }
 
-for i = 1, 4 do
+for i = 1, 3 do
     local lbl = Instance.new("TextLabel")
     lbl.Text = tabTexts[i]
     lbl.TextColor3 = Color3.fromRGB(220, 100, 255)
@@ -96,6 +96,17 @@ for i = 1, 4 do
     lbl.Size = UDim2.new(1, 0, 1, 0)
     lbl.Parent = contents[i]
 end
+
+-- Кликабельная ссылка в Discord вкладке
+local discordLabel = Instance.new("TextLabel")
+discordLabel.Text = '<a href="https://discord.gg/7gXbJEvadu">https://discord.gg/7gXbJEvadu</a>'
+discordLabel.RichText = true
+discordLabel.TextColor3 = Color3.fromRGB(114, 137, 218)  -- синий для ссылки
+discordLabel.BackgroundTransparency = 1
+discordLabel.TextSize = 24
+discordLabel.TextWrapped = true
+discordLabel.Size = UDim2.new(1, 0, 1, 0)
+discordLabel.Parent = contents[4]
 
 -- Кнопки вкладок
 local function createTabButton(name, index)
@@ -126,4 +137,4 @@ end
 local names = {"Основное", "Стратегии", "Настройки", "Discord"}
 for i, n in ipairs(names) do createTabButton(n, i) end
 
-print("Интерфейс с 4 вкладками готов!")
+print("Ссылка в Discord вкладке кликабельная!")
