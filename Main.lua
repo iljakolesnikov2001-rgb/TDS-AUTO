@@ -1,10 +1,10 @@
--- Main.lua - 4 вкладки + recorder + equip
+-- Main.lua - 4 вкладки + recorder + equip с нормализацией
 local player = game.Players.LocalPlayer
 local gui = Instance.new("ScreenGui")
 gui.Name = "TDSAutoStrat"
 gui.Parent = player:WaitForChild("PlayerGui")
 
-local mainFrame = Instance.new("Frame")
+local main yourFrame = Instance.new("Frame")
 mainFrame.Size = UDim2.new(0, 600, 0, 450)
 mainFrame.Position = UDim2.new(0.5, -300, 0.5, -225)
 mainFrame.BackgroundColor3 = Color3.fromRGB(20, 0, 45)
@@ -138,41 +138,66 @@ recorderBtn.MouseButton1Click:Connect(function()
     loadstring(game:HttpGet("https://raw.githubusercontent.com/DuxiiT/tds-recorder/refs/heads/main/recorder.lua"))()
 end)
 
--- Equip в Стратегии
-local towers = {"Scout","Sniper","Paintballer","Demoman","Hunter","Soldier","Militant","Freezer","Assassin","Shotgunner","Pyromancer","Ace Pilot","Medic","Farm","Rocketeer","Trapper","Military Base","Crook Boss","Electroshocker","Commander","Warden","Cowboy","DJ Booth","Minigunner","Ranger","Pursuit","Gatling Gun","Turret","Mortar","Mercenary Base","Brawler","Necromancer","Accelerator","Engineer","Hacker","Gladiator","Commando","Frost Blaster","Archer","Swarmer","Toxic Gunner","Sledger","Executioner","Elf Camp","Jester","Cryomancer","Hallow Punk","Harvester","Snowballer","Elementalist","Firework Technician","Biologist","Warlock","Spotlight Tech","Mecha Base"}
+-- Equip в Стратегии (починил твой код, убрал ключ, добавил нормализацию)
+local Towers = {"Scout","Sniper","Paintballer","Demoman","Hunter","Soldier","Militant","Freezer","Assassin","Shotgunner","Pyromancer","Ace Pilot","Medic","Farm","Rocketeer","Trapper","Military Base","Crook Boss","Electroshocker","Commander","Warden","Cowboy","DJ Booth","Minigunner","Ranger","Pursuit","Gatling Gun","Turret","Mortar","Mercenary Base","Brawler","Necromancer","Accelerator","Engineer","Hacker","Gladiator","Commando","Slasher","Frost Blaster","Archer","Swarmer","Toxic Gunner","Sledger","Executioner","Elf Camp","Jester","Cryomancer","Hallow Punk","Harvester","Snowballer","Elementalist","Firework Technician","Biologist","Warlock","Spotlight Tech","Mecha Base"}
 
-local selected = towers[1]
+local function normalize(s)
+    return s:lower():gsub("[^a-z0-9]", "")
+end
 
-local towerBtn = Instance.new("TextButton")
-towerBtn.Text = "Башня: " .. selected
-towerBtn.Size = UDim2.new(0, 350, 0, 50)
-towerBtn.Position = UDim2.new(0.5, -175, 0, 180)
-towerBtn.BackgroundColor3 = Color3.fromRGB(90, 0, 160)
-towerBtn.TextColor3 = Color3.new(1,1,1)
-towerBtn.Parent = contents[2]
+local Normalized = {}
+for _, name in ipairs(Towers) do
+    Normalized[#Normalized + 1] = {
+        raw = name,
+        norm = normalize(name),
+        words = name:lower():split(" ")
+    }
+end
 
-towerBtn.MouseButton1Click:Connect(function()
-    local idx = table.find(towers, selected) or 1
-    idx = idx % #towers + 1
-    selected = towers[idx]
-    towerBtn.Text = "Башня: " .. selected
-end)
-
-local equipBtn = Instance.new("TextButton")
-equipBtn.Text = "Экипировать"
-equipBtn.Size = UDim2.new(0, 250, 0, 50)
-equipBtn.Position = UDim2.new(0.5, -125, 0, 250)
-equipBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 0)
-equipBtn.TextColor3 = Color3.new(1,1,1)
-equipBtn.Parent = contents[2]
-
-equipBtn.MouseButton1Click:Connect(function()
-    if game.PlaceId ~= 3260590327 then
-        print("Только в лобби TDS!")
-        return
+local function resolveTower(input)
+    if input == "" then return end
+    local n = normalize(input)
+    for _, t in ipairs(Normalized) do
+        if t.norm == n then return t.raw end
     end
-    game:GetService("ReplicatedStorage").RemoteEvent:FireServer("Towers", "Equip", selected)
-    print("Экипировано: " .. selected)
+    for _, t in ipairs(Normalized) do
+        if t.norm:sub(1, #n) == n then return t.raw end
+    end
+    for _, t in ipairs(Normalized) do
+        for _, w in ipairs(t.words) do
+            if w:sub(1, #n) == n then return t.raw end
+        end
+    end
+end
+
+-- Текстбокс для ввода имени башни
+local textbox = Instance.new("TextBox")
+textbox.PlaceholderText = "Введи имя башни (можно частично)"
+textbox.Size = UDim2.new(0, 400, 0, 50)
+textbox.Position = UDim2.new(0.5, -200, 0, 180)
+textbox.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+textbox.TextColor3 = Color3.fromRGB(230, 230, 230)
+textbox.TextSize = 20
+textbox.Parent = contents[2]
+
+local textboxCorner = Instance.new("UICorner")
+textboxCorner.CornerRadius = UDim.new(0, 8)
+textboxCorner.Parent = textbox
+
+textbox.FocusLost:Connect(function(enterPressed)
+    if not enterPressed then return end
+    local tower = resolveTower(textbox.Text)
+    if tower then
+        if game.PlaceId ~= 3260590327 then
+            print("Только в лобби TDS!")
+            return
+        end
+        game:GetService("ReplicatedStorage").RemoteEvent:FireServer("Towers", "Equip", tower)
+        print("Экипировано: " .. tower)
+    else
+        print("Башня не найдена")
+    end
+    textbox.Text = ""
 end)
 
-print("Готово! Всё проверено, ошибки убраны.")
+print("Equip готов! Введи имя башни (можно частично, без пробелов), нажми Enter.")
