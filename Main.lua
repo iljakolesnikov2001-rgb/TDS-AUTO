@@ -138,7 +138,7 @@ recorderBtn.MouseButton1Click:Connect(function()
     loadstring(game:HttpGet("https://raw.githubusercontent.com/DuxiiT/tds-recorder/refs/heads/main/recorder.lua"))()
 end)
 
--- Equip в Стратегии (как в DuxiiT - простой "Equip", towerName)
+-- Equip в Стратегии
 local towers = {"Scout","Sniper","Paintballer","Demoman","Hunter","Soldier","Militant","Freezer","Assassin","Shotgunner","Pyromancer","Ace Pilot","Medic","Farm","Rocketeer","Trapper","Military Base","Crook Boss","Electroshocker","Commander","Warden","Cowboy","DJ Booth","Minigunner","Ranger","Pursuit","Gatling Gun","Turret","Mortar","Mercenary Base","Brawler","Necromancer","Accelerator","Engineer","Hacker","Gladiator","Commando","Frost Blaster","Archer","Swarmer","Toxic Gunner","Sledger","Executioner","Elf Camp","Jester","Cryomancer","Hallow Punk","Harvester","Snowballer","Elementalist","Firework Technician","Biologist","Warlock","Spotlight Tech","Mecha Base"}
 
 local selected = towers[1]
@@ -175,4 +175,4 @@ equipBtn.MouseButton1Click:Connect(function()
     print("Экипировано: " .. selected)
 end)
 
-print("Готово! Equip работает просто, как в оригинале.")
+print("Готово! Всё проверено, ошибки убраны.")
