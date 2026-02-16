@@ -1,4 +1,4 @@
--- Main.lua - Интерфейс с 4 вкладками + recorder + equip
+-- Main.lua - 4 вкладки + recorder + equip
 local player = game.Players.LocalPlayer
 local gui = Instance.new("ScreenGui")
 gui.Name = "TDSAutoStrat"
@@ -34,7 +34,7 @@ title.Parent = mainFrame
 -- Закрытие
 local closeBtn = Instance.new("TextButton")
 closeBtn.Text = "X"
-closeBtn.Size = UDim2 Qu.new(0, 50, 0, 50)
+closeBtn.Size = UDim2.new(0, 50, 0, 50)
 closeBtn.Position = UDim2.new(1, -55, 0, 5)
 closeBtn.BackgroundColor3 = Color3.fromRGB(180, 0, 100)
 closeBtn.TextColor3 = Color3.new(1,1,1)
@@ -44,7 +44,9 @@ local closeCorner = Instance.new("UICorner")
 closeCorner.CornerRadius = UDim.new(0, 12)
 closeCorner.Parent = closeBtn
 
-closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
+closeBtn.MouseButton1Click:Connect(function()
+    gui:Destroy()
+end)
 
 -- Панель вкладок
 local tabPanel = Instance.new("Frame")
@@ -78,10 +80,10 @@ end
 
 -- Текст для вкладок
 local tabTexts = {
-    "Основное\nДобро пожаловать в TDS Auto-Strat!",
-    "Стратегии\nЗдесь recorder и equip.",
+    "Основное\nДобро пожаловать!",
+    "Стратегии\nRecorder и equip ниже.",
     "Настройки\nПока пусто.",
-    "Discord\nПрисоединяйся:\nhttps://discord.gg/7gXbJEvadu"
+    "Discord\nhttps://discord.gg/7gXbJEvadu\n(скопируй вручную)"
 }
 
 for i = 1, 4 do
@@ -125,7 +127,7 @@ end
 local names = {"Основное", "Стратегии", "Настройки", "Discord"}
 for i, n in ipairs(names) do createTabButton(n, i) end
 
--- Recorder в "Стратегии"
+-- Recorder в Стратегии
 local recorderBtn = Instance.new("TextButton")
 recorderBtn.Text = "Запустить Recorder"
 recorderBtn.Size = UDim2.new(0, 400, 0, 60)
@@ -138,7 +140,7 @@ recorderBtn.MouseButton1Click:Connect(function()
     loadstring(game:HttpGet("https://raw.githubusercontent.com/DuxiiT/tds-recorder/refs/heads/main/recorder.lua"))()
 end)
 
--- Equip в "Стратегии"
+-- Equip в Стратегии
 local towers = {"Scout","Sniper","Paintballer","Demoman","Hunter","Soldier","Militant","Freezer","Assassin","Shotgunner","Pyromancer","Ace Pilot","Medic","Farm","Rocketeer","Trapper","Military Base","Crook Boss","Electroshocker","Commander","Warden","Cowboy","DJ Booth","Minigunner","Ranger","Pursuit","Gatling Gun","Turret","Mortar","Mercenary Base","Brawler","Necromancer","Accelerator","Engineer","Hacker","Gladiator","Commando","Frost Blaster","Archer","Swarmer","Toxic Gunner","Sledger","Executioner","Elf Camp","Jester","Cryomancer","Hallow Punk","Harvester","Snowballer","Elementalist","Firework Technician","Biologist","Warlock","Spotlight Tech","Mecha Base"}
 
 local selected = towers[1]
@@ -175,4 +177,4 @@ equipBtn.MouseButton1Click:Connect(function()
     print("Экипировано: " .. selected)
 end)
 
-print("Интерфейс с 4 вкладками + recorder + equip готов!")
+print("Готово! Всё проверено.")
