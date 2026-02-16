@@ -1,4 +1,4 @@
--- Main.lua - Простой интерфейс с 4 вкладками
+-- Main.lua - Интерфейс с 4 вкладками
 local player = game.Players.LocalPlayer
 local gui = Instance.new("ScreenGui")
 gui.Name = "TDSAutoStrat"
@@ -80,9 +80,9 @@ end
 -- Текст для вкладок
 local tabTexts = {
     "Основное\nДобро пожаловать!\nЗдесь основная информация.",
-    "Стратегии\nПока пусто — добавим позже.",
+    "Стратегии\nПока пусто — добавим функции.",
     "Настройки\nПока пусто.",
-    "Discord\nПрисоединяйся к каналу:\nhttps://discord.gg/7gXbJEvadu"
+    "Discord\nПрисоединяйся:\nhttps://discord.gg/7gXbJEvadu"
 }
 
 for i = 1, 4 do
