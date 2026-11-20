@@ -96,10 +96,10 @@ local function tp(obj, offset)
 end
 
 -- Плавный перелёт (вместо мгновенного ТП); возвращает false, если прервали
-local function moveTo(obj, stillOk)
+local function moveTo(obj, stillOk, targetPos)
 	local r, p = hrp(), pos(obj)
 	if not (r and p) then return false end
-	local target = p + Vector3.new(0, 3, 0)
+	local target = targetPos or (p + Vector3.new(0, 3, 0))
 	while true do
 		r = hrp()
 		if not r or not obj.Parent or (stillOk and not stillOk()) then return false end
@@ -250,19 +250,34 @@ local function farmStep()
 	local node = nearest(oreNodes(), CONFIG.OreSearchRadius)
 	if not node then return end
 	local ore = node:FindFirstChild("Ore") or node
-	if not moveTo(ore, function() return State.Farm end) then return end
+	local rock = node:FindFirstChild("Rock")
+	local p = pos(ore)
+	local r = hrp()
+	if not (p and r) then return end
+	-- точка сбоку от камня, на земле (а не на верхушке)
+	local radius = 4
+	for _, part in ipairs({ rock, ore }) do
+		if part and part:IsA("BasePart") then
+			radius = math.max(radius, math.max(part.Size.X, part.Size.Z) / 2 + 3)
+		end
+	end
+	local dir = Vector3.new(r.Position.X - p.X, 0, r.Position.Z - p.Z)
+	if dir.Magnitude < 0.1 then dir = Vector3.new(0, 0, 1) end
+	local stand = p + dir.Unit * radius
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { player.Character, node }
+	local hit = workspace:Raycast(stand + Vector3.new(0, 15, 0), Vector3.new(0, -60, 0), params)
+	stand = (hit and hit.Position or Vector3.new(stand.X, p.Y, stand.Z)) + Vector3.new(0, 3, 0)
+
+	if not moveTo(ore, function() return State.Farm end, stand) then return end
 	local tool = equipPickaxe()
 	local start = os.clock()
 	while State.Farm and oreAlive(node) do
 		if CONFIG.MaxTimePerOre > 0 and os.clock() - start > CONFIG.MaxTimePerOre then break end
-		local r, p = hrp(), pos(ore)
-		if r and p then
-			-- стоим рядом и смотрим на руду
-			local dir = r.Position - p
-			dir = Vector3.new(dir.X, 0, dir.Z)
-			if dir.Magnitude < 0.1 then dir = Vector3.new(0, 0, 1) end
-			local stand = p + dir.Unit * 4
-			r.CFrame = CFrame.lookAt(Vector3.new(stand.X, p.Y, stand.Z), p)
+		r = hrp()
+		if r then
+			r.CFrame = CFrame.lookAt(stand, Vector3.new(p.X, stand.Y, p.Z))
 			local cam = workspace.CurrentCamera
 			if cam then cam.CFrame = CFrame.lookAt(cam.CFrame.Position, p) end
 		end
