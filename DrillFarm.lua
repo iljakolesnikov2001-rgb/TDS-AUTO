@@ -74,6 +74,26 @@ local StatusLabel
 local function status(msg)
 	print(msg)
 	if StatusLabel then StatusLabel.Text = msg end
+	-- лог в файл экзекутора (Delta/Workspace/DrillFarm.log) — удобно смотреть вне игры
+	if appendfile then pcall(appendfile, "DrillFarm.log", os.date("%H:%M:%S ") .. tostring(msg) .. "\n") end
+end
+
+-- Отладка: если в Workspace экзекутора появился DF_cmd.lua — выполняем его и пишем результат в лог.
+-- shortcut: локальный мост для теста через adb; выключить, поставив DF_BRIDGE = false
+local DF_BRIDGE = true
+if DF_BRIDGE and isfile and readfile and delfile and loadstring then
+	task.spawn(function()
+		while Running do
+			if isfile("DF_cmd.lua") then
+				local src = readfile("DF_cmd.lua"); delfile("DF_cmd.lua")
+				local f, err = loadstring(src)
+				local ok, res = false, err
+				if f then ok, res = pcall(f) end
+				status("[CMD] " .. (ok and "ok: " or "ошибка: ") .. tostring(res))
+			end
+			task.wait(0.5)
+		end
+	end)
 end
 
 ----------------------------------------------------------------- HELPERS
@@ -202,13 +222,18 @@ end
 -- когда игрок делает это руками, и потом повторяем так же. Нужен hookmetamethod.
 local Learned = {} -- kind ("item"/"chest") -> { remote, method, args, idx, how, partName }
 local function chestNode(inst)
-	local n = inst
+	-- мимики — это монстры (Workspace.Npc, NpcFaction), не сундуки
+	if workspace:FindFirstChild("Npc") and inst:IsDescendantOf(workspace.Npc) then return end
+	-- состояние (ChestOpenState/Locked) висит на ChestNode с SessionChestId, а не на меше "Chest"
+	local n, first = inst, nil
 	for _ = 1, 6 do
-		if not n or n == workspace then return end
-		if n:GetAttribute("SessionChestId") or n:GetAttribute("RuntimeChestModel")
-			or hasKey(n.Name, { "Chest", "Crate" }) then return n end
+		if not n or n == workspace then break end
+		if n:GetAttribute("NpcFaction") then return end
+		if n:GetAttribute("SessionChestId") then return n end
+		if not first and (n:GetAttribute("RuntimeChestModel") or hasKey(n.Name, { "Chest", "Crate" })) then first = n end
 		n = n.Parent
 	end
+	return first
 end
 local function itemNode(inst)
 	local n = inst
@@ -379,7 +404,7 @@ local function pickupItem(it)
 		pcall(ways[i])
 		task.wait(0.35)
 		if done() or bagUsage(true) ~= before then
-			if pickupWay ~= i then pickupWay = i; print("[Pickup] рабочий способ #" .. i) end
+			if pickupWay ~= i then pickupWay = i; status("[Pickup] рабочий способ #" .. i) end
 			return true
 		end
 	end
@@ -784,7 +809,8 @@ local function isMySack(it)
 		and (it:GetAttribute("BagCreator") == nil or it:GetAttribute("BagCreator") == player.Name)
 end
 
--- Мешок с деньгами: пробуем Pickup, касание и промпт, пока не исчезнет
+-- Мешок с деньгами: пробуем Interact/Pickup/касание/E, пока не исчезнет; рабочий способ запоминаем
+local sackWay = 4 -- Interact(model): проверено в игре 20.11
 grabSack = function(it)
 	local pickup = knit("CarryInventoryService", "Pickup")
 	local interact = knit("InteractionService", "Interact")
@@ -807,17 +833,21 @@ grabSack = function(it)
 		end },
 	}
 	moveTo(it)
-	if pickupItem(it) then status("[Sell] мешок подобран"); return true end
-	for _, t in ipairs(tries) do
+	-- сначала способ, который уже срабатывал (в тесте это Interact(model))
+	local order = {}
+	if sackWay then table.insert(order, sackWay) end
+	for i = 1, #tries do if i ~= sackWay then table.insert(order, i) end end
+	for n, i in ipairs(order) do
 		if not it.Parent then break end
 		local r = hrp()
 		if r and bag then r.CFrame = CFrame.new(bag.Position + Vector3.new(0, 2.5, 0)) end
-		pcall(t[2])
-		task.wait(0.5)
+		pcall(tries[i][2])
+		for _ = 1, 5 do task.wait(0.1); if not it.Parent then break end end
 		if not it.Parent then
-			status("[Sell] мешок подобран способом: " .. t[1])
+			if sackWay ~= i then sackWay = i; status("[Sell] мешок подобран способом: " .. tries[i][1]) end
 			return true
 		end
+		if n == 1 and pickupItem(it) then return true end
 	end
 	return not it.Parent
 end
@@ -1512,4 +1542,9 @@ do
 	end)
 end
 
-print("[DrillFarm] Загружен. Нажмите Scan и настройте CONFIG.")
+-- доступ для отладочных команд (DF_cmd.lua)
+getgenv().DF = { State = State, CONFIG = CONFIG, Learned = Learned, status = status, scan = scan,
+	groundItems = groundItems, pickupItem = pickupItem, grabSack = grabSack, chestStep = chestStep,
+	chestInfo = chestInfo, chestNode = chestNode, usePrompt = usePrompt, moveTo = moveTo, inventory = inventory,
+	tryDrop = tryDrop, invEntries = invEntries, nearestSellPart = nearestSellPart, isMySack = isMySack, sellAll = sellAll }
+status("[DrillFarm] Загружен")
