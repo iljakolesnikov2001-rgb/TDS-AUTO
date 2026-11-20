@@ -416,7 +416,7 @@ corner(closeBtn, 8)
 -- Прокручиваемый контент (для телефонов)
 local content = new("ScrollingFrame", {
 	Size = UDim2.new(1, 0, 0, 300), BackgroundTransparency = 1, BorderSizePixel = 0,
-	LayoutOrder = 1, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	LayoutOrder = 1, CanvasSize = UDim2.new(),
 	ScrollBarThickness = 3, ScrollBarImageColor3 = T.Accent, ScrollingDirection = Enum.ScrollingDirection.Y,
 	ElasticBehavior = Enum.ElasticBehavior.Always,
 }, main)
@@ -429,7 +429,46 @@ local function fitHeight()
 	local vp = workspace.CurrentCamera.ViewportSize.Y
 	local h = list.AbsoluteContentSize.Y + 12
 	content.Size = UDim2.new(1, 0, 0, math.min(h, math.floor(vp * 0.65) - 44))
+	content.CanvasSize = UDim2.new(0, 0, 0, h)
 end
+-- Скролл мышью: колесо + перетаскивание зажатой ЛКМ (для эмуляторов)
+local scrollMoved = false
+local function setCanvas(y)
+	local maxY = math.max(0, content.AbsoluteCanvasSize.Y - content.AbsoluteWindowSize.Y)
+	content.CanvasPosition = Vector2.new(0, math.clamp(y, 0, maxY))
+end
+local function overContent(p)
+	local a, z = content.AbsolutePosition, content.AbsoluteSize
+	return content.Visible and main.Visible and p.X >= a.X and p.X <= a.X + z.X and p.Y >= a.Y and p.Y <= a.Y + z.Y
+end
+do
+	local dragging, startY, startCanvas
+	bind(UIS.InputBegan, function(i)
+		local t = i.UserInputType
+		if t == Enum.UserInputType.MouseButton1
+			and content.ScrollingEnabled and overContent(i.Position) then
+			dragging, startY, startCanvas, scrollMoved = true, i.Position.Y, content.CanvasPosition.Y, false
+		end
+	end)
+	bind(UIS.InputChanged, function(i, gp)
+		local t = i.UserInputType
+		if t == Enum.UserInputType.MouseWheel and not gp and overContent(i.Position) then
+			setCanvas(content.CanvasPosition.Y - i.Position.Z * 40)
+		elseif dragging and content.ScrollingEnabled and t == Enum.UserInputType.MouseMovement then
+			local d = i.Position.Y - startY
+			if math.abs(d) > 6 then scrollMoved = true end
+			if scrollMoved then setCanvas(startCanvas - d) end
+		end
+	end)
+	bind(UIS.InputEnded, function(i)
+		local t = i.UserInputType
+		if t == Enum.UserInputType.MouseButton1 then
+			dragging = false
+			task.defer(function() scrollMoved = false end)
+		end
+	end)
+end
+
 bind(list:GetPropertyChangedSignal("AbsoluteContentSize"), fitHeight)
 bind(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), fitHeight)
 
@@ -468,6 +507,7 @@ local function toggle(key, title)
 	hit.MouseEnter:Connect(function() tween(r, { BackgroundColor3 = T.Hover }) end)
 	hit.MouseLeave:Connect(function() tween(r, { BackgroundColor3 = T.Card }) end)
 	hit.MouseButton1Click:Connect(function()
+		if scrollMoved then return end
 		State[key] = not State[key]
 		local on = State[key]
 		tween(track, { BackgroundColor3 = on and T.Accent or T.Off })
@@ -529,7 +569,7 @@ local function action(title, fn)
 	corner(b, 8)
 	b.MouseEnter:Connect(function() tween(b, { BackgroundTransparency = 0.15 }) end)
 	b.MouseLeave:Connect(function() tween(b, { BackgroundTransparency = 0 }) end)
-	b.MouseButton1Click:Connect(fn)
+	b.MouseButton1Click:Connect(function() if not scrollMoved then fn() end end)
 end
 
 section("Фарм")
