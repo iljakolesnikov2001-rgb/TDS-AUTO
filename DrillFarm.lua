@@ -344,41 +344,224 @@ task.spawn(function()
 end)
 
 ----------------------------------------------------------------- UI
-local gui = Instance.new("ScreenGui")
-gui.Name, gui.ResetOnSpawn = "DrillFarm", false
-gui.Parent = player:WaitForChild("PlayerGui")
+local TweenService = game:GetService("TweenService")
+local UIS          = game:GetService("UserInputService")
 
-local frame = Instance.new("Frame", gui)
-frame.Size, frame.Position = UDim2.new(0, 180, 0, 0), UDim2.new(0, 20, 0.3, 0)
-frame.AutomaticSize = Enum.AutomaticSize.Y
-frame.BackgroundColor3, frame.BorderSizePixel = Color3.fromRGB(20, 20, 20), 0
-frame.Active, frame.Draggable = true, true
-local layout = Instance.new("UIListLayout", frame)
-layout.Padding = UDim.new(0, 2)
+local T = {
+	Bg     = Color3.fromRGB(16, 16, 20),
+	Card   = Color3.fromRGB(26, 26, 32),
+	Hover  = Color3.fromRGB(34, 34, 42),
+	Stroke = Color3.fromRGB(44, 44, 54),
+	Text   = Color3.fromRGB(235, 235, 240),
+	Sub    = Color3.fromRGB(130, 130, 145),
+	Accent = Color3.fromRGB(92, 140, 255),
+	Off    = Color3.fromRGB(58, 58, 68),
+}
+local FONT, FONT_B = Enum.Font.Gotham, Enum.Font.GothamBold
+local TI = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
-local function button(text, onClick)
-	local b = Instance.new("TextButton", frame)
-	b.Size = UDim2.new(1, 0, 0, 26)
-	b.BackgroundColor3, b.BorderSizePixel = Color3.fromRGB(35, 35, 35), 0
-	b.TextColor3, b.Font, b.TextSize = Color3.new(1, 1, 1), Enum.Font.Gotham, 14
-	b.Text = text
-	b.MouseButton1Click:Connect(function() onClick(b) end)
-	return b
+local function tween(o, props) TweenService:Create(o, TI, props):Play() end
+local function new(class, props, parent)
+	local o = Instance.new(class)
+	for k, v in pairs(props) do o[k] = v end
+	o.Parent = parent
+	return o
+end
+local function corner(o, r) new("UICorner", { CornerRadius = UDim.new(0, r) }, o) end
+local function stroke(o) new("UIStroke", { Color = T.Stroke, Thickness = 1 }, o) end
+
+local pg = player:WaitForChild("PlayerGui")
+local old = pg:FindFirstChild("DrillFarm")
+if old then old:Destroy() end
+
+local gui = new("ScreenGui", { Name = "DrillFarm", ResetOnSpawn = false,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, pg)
+
+local main = new("Frame", {
+	Size = UDim2.new(0, 260, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+	Position = UDim2.new(0, 24, 0.25, 0), BackgroundColor3 = T.Bg, BorderSizePixel = 0,
+}, gui)
+corner(main, 12); stroke(main)
+new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder }, main)
+
+-- Шапка
+local header = new("Frame", { Size = UDim2.new(1, 0, 0, 44), BackgroundTransparency = 1, LayoutOrder = 0 }, main)
+new("TextLabel", {
+	Text = "DrillFarm", Font = FONT_B, TextSize = 16, TextColor3 = T.Text,
+	BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left,
+	Position = UDim2.new(0, 16, 0, 6), Size = UDim2.new(1, -60, 0, 18),
+}, header)
+new("TextLabel", {
+	Text = "Drill to Earth's Core", Font = FONT, TextSize = 11, TextColor3 = T.Sub,
+	BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left,
+	Position = UDim2.new(0, 16, 0, 24), Size = UDim2.new(1, -60, 0, 14),
+}, header)
+local minBtn = new("TextButton", {
+	Text = "–", Font = FONT_B, TextSize = 18, TextColor3 = T.Sub, AutoButtonColor = false,
+	BackgroundColor3 = T.Card, Size = UDim2.new(0, 28, 0, 28), Position = UDim2.new(1, -40, 0, 8),
+}, header)
+corner(minBtn, 8)
+
+-- Контент
+local content = new("Frame", {
+	Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+	BackgroundTransparency = 1, LayoutOrder = 1,
+}, main)
+new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, content)
+new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12),
+	PaddingBottom = UDim.new(0, 12) }, content)
+
+local order = 0
+local function nextOrder() order += 1; return order end
+
+local function section(title)
+	new("TextLabel", {
+		Text = string.upper(title), Font = FONT_B, TextSize = 10, TextColor3 = T.Sub,
+		BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left,
+		Size = UDim2.new(1, 0, 0, 18), LayoutOrder = nextOrder(),
+	}, content)
 end
 
-local labels = {
-	{ "Farm", "Авто-фарм руды" }, { "Collect", "Авто-сбор" }, { "Ammo", "Патроны 25 st" },
-	{ "AutoBuy", "Автопокупка" }, { "Fuel", "Топливо" }, { "Gate", "Ворота подземелья" },
-	{ "Burn", "Сжигание трупов" }, { "Highlight", "Подсветка монстров" },
-}
-for _, l in ipairs(labels) do
-	local key, title = l[1], l[2]
-	button(title .. ": OFF", function(b)
+local function row(height)
+	local r = new("Frame", { Size = UDim2.new(1, 0, 0, height), BackgroundColor3 = T.Card,
+		BorderSizePixel = 0, LayoutOrder = nextOrder() }, content)
+	corner(r, 8)
+	return r
+end
+
+local function toggle(key, title)
+	local r = row(34)
+	new("TextLabel", {
+		Text = title, Font = FONT, TextSize = 13, TextColor3 = T.Text, BackgroundTransparency = 1,
+		TextXAlignment = Enum.TextXAlignment.Left, Position = UDim2.new(0, 12, 0, 0),
+		Size = UDim2.new(1, -64, 1, 0),
+	}, r)
+	local track = new("Frame", { Size = UDim2.new(0, 34, 0, 18), Position = UDim2.new(1, -46, 0.5, -9),
+		BackgroundColor3 = T.Off, BorderSizePixel = 0 }, r)
+	corner(track, 9)
+	local knob = new("Frame", { Size = UDim2.new(0, 14, 0, 14), Position = UDim2.new(0, 2, 0.5, -7),
+		BackgroundColor3 = T.Text, BorderSizePixel = 0 }, track)
+	corner(knob, 7)
+	local hit = new("TextButton", { Text = "", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0) }, r)
+	hit.MouseEnter:Connect(function() tween(r, { BackgroundColor3 = T.Hover }) end)
+	hit.MouseLeave:Connect(function() tween(r, { BackgroundColor3 = T.Card }) end)
+	hit.MouseButton1Click:Connect(function()
 		State[key] = not State[key]
-		b.Text = title .. (State[key] and ": ON" or ": OFF")
-		b.BackgroundColor3 = State[key] and Color3.fromRGB(40, 90, 50) or Color3.fromRGB(35, 35, 35)
+		local on = State[key]
+		tween(track, { BackgroundColor3 = on and T.Accent or T.Off })
+		tween(knob, { Position = on and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7) })
 	end)
 end
-button("Scan (F9)", scan)
+
+local function slider(title, cfgKey, min, max, step)
+	local r = row(46)
+	new("TextLabel", {
+		Text = title, Font = FONT, TextSize = 13, TextColor3 = T.Text, BackgroundTransparency = 1,
+		TextXAlignment = Enum.TextXAlignment.Left, Position = UDim2.new(0, 12, 0, 6),
+		Size = UDim2.new(1, -70, 0, 16),
+	}, r)
+	local val = new("TextLabel", {
+		Text = tostring(CONFIG[cfgKey]), Font = FONT_B, TextSize = 12, TextColor3 = T.Accent,
+		BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Right,
+		Position = UDim2.new(1, -62, 0, 6), Size = UDim2.new(0, 50, 0, 16),
+	}, r)
+	local bar = new("Frame", { Size = UDim2.new(1, -24, 0, 4), Position = UDim2.new(0, 12, 0, 32),
+		BackgroundColor3 = T.Off, BorderSizePixel = 0 }, r)
+	corner(bar, 2)
+	local fill = new("Frame", { Size = UDim2.new((CONFIG[cfgKey] - min) / (max - min), 0, 1, 0),
+		BackgroundColor3 = T.Accent, BorderSizePixel = 0 }, bar)
+	corner(fill, 2)
+
+	local dragging = false
+	local function set(x)
+		local a = math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+		local v = math.floor((min + (max - min) * a) / step + 0.5) * step
+		CONFIG[cfgKey] = v
+		val.Text = tostring(v)
+		fill.Size = UDim2.new((v - min) / (max - min), 0, 1, 0)
+	end
+	local hit = new("TextButton", { Text = "", BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 20), Position = UDim2.new(0, 0, 0, 24) }, r)
+	hit.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			dragging = true; set(i.Position.X)
+		end
+	end)
+	UIS.InputChanged:Connect(function(i)
+		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+			set(i.Position.X)
+		end
+	end)
+	UIS.InputEnded:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+end
+
+local function action(title, fn)
+	local b = new("TextButton", {
+		Text = title, Font = FONT_B, TextSize = 13, TextColor3 = T.Text, AutoButtonColor = false,
+		BackgroundColor3 = T.Accent, Size = UDim2.new(1, 0, 0, 34), LayoutOrder = nextOrder(),
+	}, content)
+	corner(b, 8)
+	b.MouseEnter:Connect(function() tween(b, { BackgroundTransparency = 0.15 }) end)
+	b.MouseLeave:Connect(function() tween(b, { BackgroundTransparency = 0 }) end)
+	b.MouseButton1Click:Connect(fn)
+end
+
+section("Фарм")
+toggle("Farm", "Авто-фарм руды")
+toggle("Collect", "Авто-сбор")
+toggle("Ammo", "Патроны (25 st)")
+toggle("AutoBuy", "Автопокупка")
+section("Бур")
+toggle("Fuel", "Заправка")
+toggle("Gate", "Ворота подземелья")
+section("Прочее")
+toggle("Burn", "Сжигание трупов")
+toggle("Highlight", "Подсветка монстров")
+section("Настройки")
+slider("Радиус поиска руды", "OreSearchRadius", 0, 500, 10)
+slider("Время на руду, сек", "MaxTimePerOre", 0, 30, 1)
+slider("Топливо, %", "FuelTargetPct", 10, 100, 5)
+slider("Макс. цена трупа", "CorpseMaxValue", 0, 2000, 50)
+action("Scan  ·  F9", scan)
+new("TextLabel", {
+	Text = "RightShift — скрыть меню", Font = FONT, TextSize = 11, TextColor3 = T.Sub,
+	BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 14), LayoutOrder = nextOrder(),
+}, content)
+
+-- Свернуть / скрыть
+local collapsed = false
+minBtn.MouseButton1Click:Connect(function()
+	collapsed = not collapsed
+	content.Visible = not collapsed
+	minBtn.Text = collapsed and "+" or "–"
+end)
+UIS.InputBegan:Connect(function(i, gp)
+	if not gp and i.KeyCode == Enum.KeyCode.RightShift then main.Visible = not main.Visible end
+end)
+
+-- Перетаскивание за шапку
+do
+	local dragging, startPos, startInput
+	header.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			dragging, startPos, startInput = true, main.Position, i.Position
+		end
+	end)
+	UIS.InputChanged:Connect(function(i)
+		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+			local d = i.Position - startInput
+			main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+		end
+	end)
+	UIS.InputEnded:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+end
 
 print("[DrillFarm] Загружен. Нажмите Scan и настройте CONFIG.")
