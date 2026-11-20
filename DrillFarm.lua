@@ -298,19 +298,18 @@ end
 -- Сумка полна: к точке продажи (если есть), иначе к дрели
 local sellAll -- определяется ниже
 local function onBagFull(who)
-	local sell = nearestSellPart()
-	if sell then
+	-- Автопродажа включена и есть стол продажи — продаём; иначе — к дрели
+	local sell = State.AutoSell and nearestSellPart()
+	if sell and sellAll then
 		tp(sell)
-		print("[" .. who .. "] Сумка полна — ТП к точке продажи")
-		if State.AutoSell and sellAll then
-			local ok, err = pcall(sellAll, sell)
-			if not ok then warn("[Sell] ошибка: " .. tostring(err)) end
-		end
-	else
-		local drill = workspace:FindFirstChild(CONFIG.DrillName)
-		if drill then tpToDrill(drill) end
-		print("[" .. who .. "] Сумка полна — ТП к дрели")
+		print("[" .. who .. "] Сумка полна — продажа")
+		local ok, err = pcall(sellAll, sell)
+		if not ok then warn("[Sell] ошибка: " .. tostring(err)) end
+		if not bagFull() then return end
 	end
+	local drill = workspace:FindFirstChild(CONFIG.DrillName)
+	if drill then tpToDrill(drill) end
+	print("[" .. who .. "] Сумка полна — ТП к дрели")
 end
 
 local function farmStep()
