@@ -481,7 +481,8 @@ local function equipWeapon()
 end
 -- каменных мобов (Mutation_Stone) меч не пробивает — только кирка
 local function weaponFor(m)
-	if m and m:GetAttribute("Mutation_Stone") == true then return equipPickaxe() end
+	-- каменные мобы и Fuel Leech (сосёт топливо из бура) пробиваются только киркой
+	if m and (m:GetAttribute("Mutation_Stone") == true or m:GetAttribute("FuelLeechState") ~= nil) then return equipPickaxe() end
 	return equipWeapon()
 end
 
@@ -1262,17 +1263,20 @@ local function standUnder(m)
 end
 
 local function killOne(m)
-	local h = m:FindFirstChild("Humanoid")
+	-- у Fuel Leech нет Humanoid — здоровье в атрибуте FuelLeechHealth (см. mhp ниже)
+	local h = m:FindFirstChild("Humanoid") or (m:GetAttribute("FuelLeechState") and { Health = 1 })
 	local tool = weaponFor(m)
 	if not (h and tool) then killSkip[m] = os.clock() + 30; return end
 	local stand, base, mid = standUnder(m)
 	if not stand then return end
 	if not moveTo(m, function() return State.KillAura or State.Auto end, stand) then return end
 	Moving = true -- ноклип на время удара
-	local t0, lastHp, lastHit = os.clock(), h.Health, os.clock()
+	-- у Fuel Leech своё здоровье в атрибуте FuelLeechHealth
+	local function mhp() return m:GetAttribute("FuelLeechHealth") or h.Health end
+	local t0, lastHp, lastHit = os.clock(), mhp(), os.clock()
 	local misses, myHp0, nodmg = 0, hpPct(), false
 	local toolCheck = os.clock()
-	while Running and (State.KillAura or State.Auto) and m.Parent and h.Health > 0 do
+	while Running and (State.KillAura or State.Auto) and m.Parent and h.Health > 0 and mhp() > 0 do
 		local r = hrp()
 		stand, base, mid = standUnder(m)
 		if not (r and stand) then break end
@@ -1285,7 +1289,7 @@ local function killOne(m)
 			if not holds(at, tool) then tool = weaponFor(m) or tool end
 		end
 		swing(tool)
-		if h.Health < lastHp - 0.01 then lastHp, lastHit = h.Health, os.clock() end
+		if mhp() < lastHp - 0.01 then lastHp, lastHit = mhp(), os.clock() end
 		if os.clock() - lastHit > 1.2 then -- урона нет: следующая позиция из списка
 			killIdx = killIdx % #killCands + 1
 			lastHit, misses = os.clock(), misses + 1
@@ -1299,7 +1303,7 @@ local function killOne(m)
 		RunService.Heartbeat:Wait()
 	end
 	Moving = false
-	local dead = not m.Parent or h.Health <= 0
+	local dead = not m.Parent or h.Health <= 0 or mhp() <= 0
 	if dead then Stats.kills += 1 elseif nodmg then killSkip[m] = os.clock() + 20 elseif hpPct() >= CONFIG.GuardHpPct then killSkip[m] = os.clock() + 30 end
 	local at = gameTool()
 	status(("[Kill] %s: %s за %.1fс%s"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0,
@@ -2067,6 +2071,19 @@ local function autoStep()
 	local dp = drill and pos(drill)
 	if not dp then Phase = "Бур не найден"; return end
 	local fp, fuel = fuelPct()
+
+	-- Fuel Leech присосался к буру и сосёт топливо — убиваем первым делом (киркой)
+	local npc = workspace:FindFirstChild("Npc")
+	for _, m in ipairs(npc and npc:GetChildren() or {}) do
+		local p = pos(m)
+		if m:GetAttribute("FuelLeechState") == "Attached" and m:GetAttribute("FuelLeechVulnerable") ~= false
+			and (m:GetAttribute("FuelLeechHealth") or 0) > 0 and p and (p - dp).Magnitude < 80 then
+			Phase = "Бью Fuel Leech (сосёт топливо)"
+			driveStop()
+			killOne(m)
+			return
+		end
+	end
 
 	-- Финальная стена (босс-бар): волна не кончится, пока стена цела. Бур, упёршийся в стену, ломает её сам,
 	-- пока есть топливо, — водитель не нужен. Поэтому: доезжаем до стены, а пока её HP падает — сидим в укрытии
