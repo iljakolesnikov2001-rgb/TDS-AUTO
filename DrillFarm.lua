@@ -556,6 +556,73 @@ local function tryDrop(e)
 	return false
 end
 
+-- Кирки в хотбаре: оставляем одну лучшую (по Damage, затем Value), остальные выкидываем на стол
+local function toolScore(t)
+	return (t:GetAttribute("Damage") or 0) * 100000 + (t:GetAttribute("Value") or t:GetAttribute("Cost") or 0)
+end
+local function myPickaxes()
+	local out = {}
+	for _, src in ipairs({ player:FindFirstChild("Backpack"), player.Character }) do
+		if src then
+			for _, t in ipairs(src:GetChildren()) do
+				if t:IsA("Tool") and (t:GetAttribute("Class") == "Pickaxe" or hasKey(t.Name, { "Pickaxe" })) then
+					table.insert(out, t)
+				end
+			end
+		end
+	end
+	table.sort(out, function(a, b) return toolScore(a) > toolScore(b) end)
+	return out
+end
+local function toolGone(t, count)
+	return t.Parent == nil or not (t:IsDescendantOf(player.Backpack) or (player.Character and t:IsDescendantOf(player.Character)))
+		or (t:GetAttribute("Count") or 1) < count
+end
+local function dropTool(t)
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	local count = t:GetAttribute("Count") or 1
+	local id = t:GetAttribute("ItemDatabaseId")
+	local drop, dropSpec = knit("ToolService", "Drop"), knit("ToolService", "DropSpecificItem")
+	local tries = {
+		function() if hum then hum:EquipTool(t) end; task.wait(0.2); return drop and drop:InvokeServer() end,
+		function() return drop and drop:InvokeServer(t) end,
+		function() return dropSpec and dropSpec:InvokeServer(t) end,
+		function() return dropSpec and dropSpec:InvokeServer(t.Name) end,
+		function() return dropSpec and id and dropSpec:InvokeServer(id) end,
+	}
+	for _, f in ipairs(tries) do
+		pcall(f)
+		task.wait(0.4)
+		if toolGone(t, count) then return true end
+	end
+	return false
+end
+local function sellExtraPickaxes(mine)
+	local folder = workspace:FindFirstChild("Items")
+	for _ = 1, 20 do
+		local list = myPickaxes()
+		local best = list[1]
+		local target
+		for i = 2, #list do target = list[i]; break end
+		-- стак одинаковых (×5): если лучшая сама в стаке >1 — продаём лишние из стака
+		if not target and best and (best:GetAttribute("Count") or 1) > 1 then target = best end
+		if not target then return end
+		local before = {}
+		if folder then for _, it in ipairs(folder:GetChildren()) do before[it] = true end end
+		local name = target.Name
+		if dropTool(target) then
+			status("[Sell] продаю кирку: " .. name)
+			if folder then
+				task.wait(0.2)
+				for _, it in ipairs(folder:GetChildren()) do if not before[it] then mine[it] = true end end
+			end
+		else
+			status("[Sell] не удалось выкинуть кирку: " .. name)
+			return
+		end
+	end
+end
+
 local function isMySack(it)
 	return it:GetAttribute("ItemDatabaseId") == "Money_Sack"
 		and (it:GetAttribute("BagCreator") == nil or it:GetAttribute("BagCreator") == player.Name)
@@ -618,6 +685,7 @@ sellAll = function(sellPart)
 		end
 		tp(spot, Vector3.new(0, 4, 0))
 	end
+	pcall(sellExtraPickaxes, mine)
 	if next(mine) == nil then
 		status("[Sell] нечего продавать (или не удалось выкинуть — нужен лог SimpleSpy)")
 		return
