@@ -9,10 +9,11 @@ local CONFIG = {
 	GateStopDist     = 150,  -- останавливаемся у ворот подземелья ближе этого (по горизонтали: ворота стоят сбоку)
 	WallStopDist     = 110,  -- перед финальной стеной (при ударе идёт волна врагов) ждём полное HP
 	GuardHpPct       = 55,   -- HP ниже — прячемся под землю
-	SafeHpPct        = 95,   -- выходим из укрытия, когда HP восстановилось
+	SafeHpPct        = 70,   -- выходим из укрытия, когда HP восстановилось
 	FuelTargetPct    = 50,   -- заправляем, когда топлива меньше (если в рюкзаке есть канистра)
 	FuelSearchRadius = 500,  -- топливо почти кончилось, канистр нет — ищем дальше
 	DriveMinFuel     = 3,
+	MedkitStock      = 6,     -- держать аптечек в запасе (покупаются в магазине крепости)
 	SellAtPct        = 70,   -- продаём, когда сумка заполнена на N% и стол продажи рядом с буром
 	DungeonRadius    = 250,  -- в подземелье: монстры/сундуки/лут в этом радиусе
 	KillRadius       = 80,   -- Kill Aura
@@ -40,7 +41,7 @@ local CONFIG = {
 	MonsterFilter    = {},   -- подсветка: пусто = все монстры
 	HighlightColor   = Color3.fromRGB(255, 60, 60),
 	SellKeepRarity   = { "Legendary", "Mythic", "Exotic", "Secret", "Divine" }, -- не продавать
-	SellKeepCategory = { "Fuel" },  -- топливо не продаём
+	SellKeepCategory = { "Fuel", "Consumable" },  -- топливо не продаём
 	MoveSpeed        = 540,  -- студов/сек при перелёте
 	PickupDelay      = 0.6,
 	Tick             = 0.25,
@@ -265,6 +266,8 @@ local function changed(kind, node)
 	return st ~= nil and st ~= "Idle"
 end
 local function learnFrom(remote, method, args)
+	-- сундук смерти забирается своим вызовом (TakeAllItems) — это не способ подбора обычных предметов
+	if remote:GetFullName():find("DeathChest", 1, true) then return end
 	for i = 1, args.n do
 		local kind, node, how = refOf(args[i])
 		-- во время продажи предметы со стола исчезают сами — не путать это с подбором
@@ -466,7 +469,7 @@ local function equipBest(pick)
 end
 -- экипируем только через ToolService.EquipTool (Humanoid:EquipTool не создаёт ActiveTool — удары не засчитываются)
 local function equipPickaxe()
-	return equipBest(function(t) return hasKey(t.Name, { CONFIG.PickaxeName }) and 1 end)
+	return equipBest(function(t) return hasKey(t.Name, { CONFIG.PickaxeName }) and (t:GetAttribute("Damage") or 1) end)
 end
 -- оружие для монстров: ближний бой с наибольшим уроном (меч бьёт в 5 раз сильнее кирки)
 local function equipWeapon()
@@ -475,6 +478,11 @@ local function equipWeapon()
 			return t:GetAttribute("Damage") or 1
 		end
 	end) or equipPickaxe()
+end
+-- каменных мобов (Mutation_Stone) меч не пробивает — только кирка
+local function weaponFor(m)
+	if m and m:GetAttribute("Mutation_Stone") == true then return equipPickaxe() end
+	return equipWeapon()
 end
 
 -- Жилы: Part с атрибутами SessionOreType / OreLoaded (Workspace.Chunks...Nodes.Ore_Node*)
@@ -625,8 +633,10 @@ local function farmStep()
 
 	if not moveTo(ore, function() return farming() end, stand) then return end
 	local tool = equipPickaxe()
-	local start = os.clock()
+	local start, oreCheck = os.clock(), os.clock()
 	while farming() and oreAlive(node) do
+		-- выпавшую руду подбираем сразу, а не после того как жила кончится (иначе она пропадает/её уносит)
+		if os.clock() - oreCheck > 1 and pickupOresNear then oreCheck = os.clock(); pickupOresNear(p, 25, true) end
 		if CONFIG.MaxTimePerOre > 0 and os.clock() - start > CONFIG.MaxTimePerOre then break end
 		if Selling then task.wait(0.3) continue end -- убийство монстров / продажа заняли персонажа
 		r = hrp()
@@ -679,7 +689,7 @@ local grabSack -- ниже
 
 
 -- Поднять выпавшую руду (DisplayCategory=Ore) рядом с точкой
-pickupOresNear = function(center, radius)
+pickupOresNear = function(center, radius, quick)
 	local folder = workspace:FindFirstChild("Items")
 	if not folder then return end
 	local t0 = os.clock()
@@ -697,7 +707,7 @@ pickupOresNear = function(center, radius)
 				end
 			end
 		end
-		if found then return end
+		if found or quick then return end
 		task.wait(0.3)
 	until os.clock() - t0 > 2
 end
@@ -773,7 +783,14 @@ local function dropTool(t)
 	local count = t:GetAttribute("Count") or 1
 	local id = t:GetAttribute("ItemDatabaseId")
 	local drop, dropSpec = knit("ToolService", "Drop"), knit("ToolService", "DropSpecificItem")
+	local eq = knit("ToolService", "EquipTool")
 	local tries = {
+		-- взять в руки через ToolService (как игра) и Drop() — так выкидываются мечи/броня
+		function()
+			local at = gameTool()
+			if not (at and at.Tool and at.Tool.Name == t.Name) and eq then eq:InvokeServer(t); task.wait(0.4) end
+			return drop and drop:InvokeServer()
+		end,
 		function() if hum then hum:EquipTool(t) end; task.wait(0.2); return drop and drop:InvokeServer() end,
 		function() return drop and drop:InvokeServer(t) end,
 		function() return dropSpec and dropSpec:InvokeServer(t) end,
@@ -809,6 +826,52 @@ local function sellExtraPickaxes(mine)
 		else
 			status("[Sell] не удалось выкинуть кирку: " .. name)
 			return
+		end
+	end
+end
+
+-- Старое снаряжение на продажу: всё оружие ближнего боя, кроме лучшего; броня из рюкзака (лучшая уже надета
+-- armorStep'ом); пушки (патроны скрипт не покупает). Аптечки, топливо и кирки (их — sellExtraPickaxes) не трогаем.
+-- обычная броня (только защита) — её можно продавать; с особыми свойствами (Hoarder — сумка, скорость, эффекты) — нет
+local plainKeys = { ArmorType = 1, Value = 1, MedicalStackCount = 1, Cost = 1, Tool = 1, ItemDatabaseTemplate = 1, DisplayName = 1,
+	CarryItemId = 1, Rarity = 1, ItemDatabaseId = 1, Category = 1, Armor = 1, SessionSnapshotItemId = 1, CommittedChestReward = 1,
+	CarryStackKey = 1, LastDragger = 1, Icon = 1, Description = 1, InventoryHotbar = 1 }
+local function plainArmor(t)
+	if t:GetAttribute("Rarity") ~= "Common" then return false end
+	for k in pairs(t:GetAttributes()) do if not plainKeys[k] then return false end end
+	return true
+end
+local function oldGear()
+	local melee, out = {}, {}
+	for _, src in ipairs({ player:FindFirstChild("Backpack"), player.Character }) do
+		for _, t in ipairs(src and src:GetChildren() or {}) do
+			if t:IsA("Tool") then
+				local cat = t:GetAttribute("Category") or ""
+				if cat == "Melee" then table.insert(melee, t)
+				elseif cat == "Armor" and plainArmor(t) or cat:find("Gun") or cat == "Tool" and t:GetAttribute("Class") ~= "Pickaxe" and t:GetAttribute("ActionType") ~= "Use" then
+					table.insert(out, t)
+				end
+			end
+		end
+	end
+	table.sort(melee, function(a, b) return (a:GetAttribute("Damage") or 0) > (b:GetAttribute("Damage") or 0) end)
+	for i = 2, #melee do table.insert(out, melee[i]) end
+	return out
+end
+local function sellOldGear(mine)
+	local folder = workspace:FindFirstChild("Items")
+	for _, t in ipairs(oldGear()) do
+		local before = {}
+		if folder then for _, it in ipairs(folder:GetChildren()) do before[it] = true end end
+		local name = t:GetAttribute("DisplayName") or t.Name
+		if dropTool(t) then
+			status("[Sell] продаю старое: " .. name)
+			if folder then
+				task.wait(0.2)
+				for _, it in ipairs(folder:GetChildren()) do if not before[it] then mine[it] = true end end
+			end
+		else
+			status("[Sell] не удалось выкинуть: " .. name)
 		end
 	end
 end
@@ -899,6 +962,7 @@ sellAll = function(sellPart)
 		tp(spot, Vector3.new(0, 4, 0))
 	end
 	pcall(sellExtraPickaxes, mine)
+	pcall(sellOldGear, mine)
 	if next(mine) == nil then
 		status("[Sell] нечего продавать (или не удалось выкинуть — нужен лог SimpleSpy)")
 		return
@@ -997,6 +1061,15 @@ local function fuelTools()
 	return out
 end
 
+-- Трупы мобов (Category=Corpse, Fuel=5) лежат в сумке; брошенный в топливный отсек труп сгорает в топливо
+local function corpses()
+	local inv, out = inventory(), {}
+	for _, e in pairs(inv and inv.Entries or {}) do
+		if type(e) == "table" and e.Category == "Corpse" and e.Id then table.insert(out, e) end
+	end
+	return out
+end
+
 -- Езда: DrillService.StartDriving → газ через LocalDriverSeat (клиент игры сам шлёт UpdateDriverThrottle).
 local driveStarted = false
 local function driveCall(name, ...)
@@ -1051,6 +1124,7 @@ local function drive()
 end
 
 local refuelNext = 0
+local enemies -- ниже (бой)
 local function refuel()
 	local d = getDrill()
 	local part = d and d:FindFirstChild("FuelTouchPart")
@@ -1076,6 +1150,23 @@ local function refuel()
 			local _, now = fuelPct()
 			if now > was + 1 or not t.Parent then break end
 		end
+	end
+	local drop = knit("CarryInventoryService", "DropGroup")
+	local burned = 0
+	-- труп кидаем ПЕРЕД печкой (снаружи бура): брошенный внутрь отсека отлетает и не засчитывается
+	local function front()
+		local r = hrp()
+		if r then r.AssemblyLinearVelocity = Vector3.zero; r.CFrame = d:GetPivot() * CFrame.new(0, -1, 21) end
+	end
+	for _, e in ipairs(drop and corpses() or {}) do
+		if fuelPct() >= 95 or not hrp() or hpPct() < CONFIG.GuardHpPct + 10 or #enemies(20) >= 2 then break end
+		for _ = 1, 5 do front(); task.wait(0.1) end
+		if pcall(function() drop:InvokeServer(e.Id) end) then burned += 1 end
+		for _ = 1, 15 do front(); task.wait(0.1) end -- ждём, пока труп упадёт в печь
+	end
+	if burned > 0 then
+		inventory(true)
+		status("[Fuel] сжёг трупов: " .. burned)
 	end
 	Moving = false
 	local _, after = fuelPct()
@@ -1132,7 +1223,7 @@ local Killing = false
 local lastSurface
 
 -- живые враги в радиусе от center (по умолчанию — от персонажа)
-local function enemies(radius, center)
+enemies = function(radius, center)
 	local out, folder, r = {}, workspace:FindFirstChild("Npc"), hrp()
 	center = center or (r and r.Position)
 	if not (folder and center) then return out end
@@ -1172,7 +1263,7 @@ end
 
 local function killOne(m)
 	local h = m:FindFirstChild("Humanoid")
-	local tool = equipWeapon()
+	local tool = weaponFor(m)
 	if not (h and tool) then killSkip[m] = os.clock() + 30; return end
 	local stand, base, mid = standUnder(m)
 	if not stand then return end
@@ -1191,7 +1282,7 @@ local function killOne(m)
 		if os.clock() - toolCheck > 1 then -- меч «выпал» из ActiveTool — удары идут впустую
 			toolCheck = os.clock()
 			local at = gameTool()
-			if not holds(at, tool) then tool = equipWeapon() or tool end
+			if not holds(at, tool) then tool = weaponFor(m) or tool end
 		end
 		swing(tool)
 		if h.Health < lastHp - 0.01 then lastHp, lastHit = h.Health, os.clock() end
@@ -1213,6 +1304,40 @@ local function killOne(m)
 	local at = gameTool()
 	status(("[Kill] %s: %s за %.1fс%s"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0,
 		dead and "" or (" (поз.%d, меч в руке: %s)"):format(killIdx, tostring(holds(at, tool)))))
+end
+
+-- Орда: бьём крайнего моба с дистанции (меч достаёт на ~14 st, гоблины — ближе), стоя со стороны, противоположной
+-- толпе; после каждого кадра встаём заново (мобы подходят). Если урон не идёт — подходим ближе.
+local function hordeKill(m, center)
+	local h = m:FindFirstChildOfClass("Humanoid")
+	local tool = weaponFor(m)
+	if not (h and tool) then return end
+	-- у каждого оружия своя дальность (атрибут Range); встаём чуть ближе предела
+	local range = math.max(5, (tool:GetAttribute("Range") or 12) - 2)
+	local t0, hp, last = os.clock(), h.Health, os.clock()
+	local fallback = false
+	Moving = true
+	while Running and State.Auto and m.Parent and h.Health > 0 and os.clock() - t0 < 15 and hpPct() >= CONFIG.GuardHpPct do
+		local r, p = hrp(), pos(m)
+		if not (r and p) then break end
+		local away = Vector3.new(p.X - center.X, 0, p.Z - center.Z)
+		away = away.Magnitude > 0.1 and away.Unit or Vector3.new(1, 0, 0)
+		local stand = p + away * range
+		r.AssemblyLinearVelocity = Vector3.zero
+		r.CFrame = CFrame.lookAt(stand, Vector3.new(p.X, stand.Y, p.Z))
+		swing(tool)
+		if h.Health < hp then hp, last = h.Health, os.clock() end
+		if os.clock() - last > 1.5 then
+			if range <= 5 then fallback = true; break end -- с дистанции не бьётся (паук низкий и т.п.)
+			range = math.max(5, range - 2); last = os.clock()
+		end
+		RunService.Heartbeat:Wait()
+	end
+	Moving = false
+	if fallback and m.Parent and h.Health > 0 and hpPct() >= CONFIG.GuardHpPct then return killOne(m) end
+	local dead = not m.Parent or h.Health <= 0
+	if dead then Stats.kills += 1 else killSkip[m] = os.clock() + 10 end
+	status(("[Horde] %s: %s за %.1fс (дистанция %d)"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0, range))
 end
 
 -- true — были монстры (шаг занят), false — убивать некого
@@ -1303,9 +1428,58 @@ local function safeSpot(avoid)
 	return CFrame.new(best.X, (hit and hit.Position.Y or center.Y) - 16, best.Z) -- под полом
 end
 
+-- Аптечки (Class=Medkit: Bandages +10% за 10 монет, Basic_Medkit ...): взять в руки и ActiveTool:Consume().
+-- Регенерация ~0.4 HP/с — без аптечек укрытие длится минутами.
+local function medkits()
+	local out = {}
+	for _, src in ipairs({ player:FindFirstChild("Backpack"), player.Character }) do
+		for _, t in ipairs(src and src:GetChildren() or {}) do
+			if t:IsA("Tool") and t:GetAttribute("Class") == "Medkit" then table.insert(out, t) end
+		end
+	end
+	-- сначала маленькие, чтобы не тратить большую аптечку на пару HP
+	table.sort(out, function(a, b) return (a:GetAttribute("Health") or 0) < (b:GetAttribute("Health") or 0) end)
+	return out
+end
+local healNext = 0
+local function heal(belowPct)
+	if os.clock() < healNext or hpPct() >= belowPct then return false end
+	local h = hum()
+	for _, t in ipairs(medkits()) do
+		local gain = (t:GetAttribute("Health") or 0.1) * 100
+		-- большая аптечка — только когда HP реально мало
+		if hpPct() + gain <= 105 or t == medkits()[#medkits()] then
+			local eq = knit("ToolService", "EquipTool")
+			if not (eq and h) then return false end
+			if t.Parent ~= player.Character then pcall(function() eq:InvokeServer(t) end); task.wait(0.3) end
+			local at = gameTool()
+			local h0 = h.Health
+			if at and at.Consume then pcall(at.Consume, at) end
+			task.wait((t:GetAttribute("UseTime") or 1) + 0.3)
+			healNext = os.clock() + 0.5
+			if h.Health > h0 then
+				Stats.heals = (Stats.heals or 0) + 1
+				status(("[Heal] %s: HP %.0f → %.0f"):format(t:GetAttribute("DisplayName") or t.Name, h0, h.Health))
+				return true
+			end
+			healNext = os.clock() + 5
+			return false
+		end
+	end
+	return false
+end
+
 -- Мало HP: слезаем с бура, улетаем в безопасную точку под землёй и ждём, пока HP восстановится
+-- Есть ли смысл сидеть в укрытии: мобы у бура/рядом, яд, или HP совсем мало. Иначе HP восстанавливается
+-- и за рулём — простаивать минутами незачем.
+local function dangerNear()
+	if hpPct() < 30 or poisoned() then return true end
+	local d = getDrill()
+	local c = d and pos(d)
+	return (c and #enemies(70, c) > 0) or #enemies(40) > 0
+end
 local Hiding = false
-local function hide(why)
+local function hide(why, keep)
 	local r = hrp()
 	if not r or Hiding then return end
 	Hiding = true
@@ -1317,12 +1491,13 @@ local function hide(why)
 	pcall(function()
 		if not spot then return end
 		local t0, lastHp, lastCheck = os.clock(), hpPct(), os.clock()
-		while Running and (State.Auto or State.KillAura) and alive() and hpPct() < CONFIG.SafeHpPct and os.clock() - t0 < 240 do
+		while Running and (State.Auto or State.KillAura) and alive() and ((hpPct() < CONFIG.SafeHpPct and dangerNear()) or (keep and keep())) and os.clock() - t0 < 240 do
 			r = hrp()
 			if not r then break end
-			r.Anchored = true
+			r.Anchored = false -- Anchored не реплицируется: для сервера мы оставались там, где нас били
 			r.AssemblyLinearVelocity = Vector3.zero
 			r.CFrame = spot
+			if hpPct() < CONFIG.SafeHpPct and heal(CONFIG.SafeHpPct) then lastHp = hpPct() end
 			if os.clock() - lastCheck > 2 then
 				if hpPct() < lastHp - 2 then
 					spot = safeSpot(spot.Position) or spot
@@ -1330,7 +1505,7 @@ local function hide(why)
 				end
 				lastHp, lastCheck = hpPct(), os.clock()
 			end
-			task.wait(0.25)
+			RunService.Heartbeat:Wait()
 		end
 	end)
 	r = hrp()
@@ -1433,6 +1608,7 @@ end
 
 ----------------------------------------------------------------- AUTO FARM
 -- Лут: по одному предмету за шаг (между шагами заново проверяем HP/топливо/монстров)
+local gearGain, wearItem -- ниже (магазин)
 local function lootStep(center, radius, fuelOnly)
 	local full = bagFull()
 	local best, bd
@@ -1440,9 +1616,11 @@ local function lootStep(center, radius, fuelOnly)
 		local p = pos(it)
 		if p and (p - center).Magnitude <= radius and (skipUntil[it] or 0) < os.clock() and (dungeonActive or not inZone(p)) then
 			local name = it:GetAttribute("DisplayName") or it.Name
-			local isFuel = it:GetAttribute("Category") == "Fuel"
+			local isFuel = it:GetAttribute("Category") == "Fuel" or it:GetAttribute("Category") == "Corpse"
 			local want
 			if it:GetAttribute("ItemDatabaseId") == "Money_Sack" then want = not fuelOnly and isMySack(it)
+			-- трупы — мелкое топливо (5) и место в сумке: берём, только пока бак не почти полон
+			elseif it:GetAttribute("Category") == "Corpse" then want = not full and fuelPct() < 85
 			elseif fuelOnly then want = isFuel and not full
 			else want = not full and (isFuel or ((it:GetAttribute("Value") or 0) >= CONFIG.ItemsMinValue
 				and not hasKey(name, CONFIG.IgnoredItems)))
@@ -1459,6 +1637,11 @@ local function lootStep(center, radius, fuelOnly)
 	if not clearAround(pos(best), 25) then skipUntil[best] = os.clock() + 30; return true end
 	if best:GetAttribute("ItemDatabaseId") == "Money_Sack" then
 		if not grabSack(best) then skipUntil[best] = os.clock() + 30 end
+		return true
+	end
+	if best:GetAttribute("Category") == "Armor" and gearGain and gearGain(best) then
+		skipUntil[best] = os.clock() + 60
+		wearItem(best)
 		return true
 	end
 	if moveTo(best, collecting) then
@@ -1499,6 +1682,162 @@ local function sellStep(center, force)
 	Selling = false
 	if ok then Stats.sells += 1 else status("[Sell] ошибка: " .. tostring(err)) end
 	sellNext = os.clock() + 20
+	return true
+end
+
+-- Магазин крепости: товар (тег ShopItem) перетаскиваем на стол у кассы (DragService.Request → PivotTo → Cancel),
+-- затем ShopService.Buy(касса) — платим МОНЕТАМИ (проверено: 215 → 115). Стенд брони за Robux (ArmorSaleStand) не трогаем.
+local CS = game:GetService("CollectionService")
+local shopSkip = setmetatable({}, { __mode = "k" })
+local shopNext = 0
+local function bestOwned(pred)
+	local best = 0
+	for _, src in ipairs({ player:FindFirstChild("Backpack"), player.Character }) do
+		for _, t in ipairs(src and src:GetChildren() or {}) do
+			if (t:IsA("Tool") or t:IsA("Model")) and pred(t) then best = math.max(best, t:GetAttribute("Damage") or 0) end
+		end
+	end
+	return best
+end
+-- насколько товар лучше того, что есть (nil — не нужен)
+local shopCoins = 0
+gearGain = function(it)
+	local cat, dmg = it:GetAttribute("Category"), it:GetAttribute("Damage") or 0
+	if cat == "Melee" and it:GetAttribute("ActionType") == "Swing" then
+		local have = bestOwned(function(t) return t:GetAttribute("Category") == "Melee" end)
+		return dmg > have and (dmg - have) / math.max(have, 1) or nil
+	elseif cat == "Pickaxe" then
+		local have = bestOwned(function(t) return t:GetAttribute("Class") == "Pickaxe" or t.Name:find("Pickaxe") ~= nil end)
+		return dmg > have and (dmg - have) / math.max(have, 1) * 0.5 or nil -- кирка важнее меча только для угля
+	elseif it:GetAttribute("Class") == "Medkit" then
+		-- запас аптечек: до MedkitStock штук, выгоднее — больше HP за монету
+		if #medkits() >= CONFIG.MedkitStock then return nil end
+		-- дорогие аптечки (Golden за 1000) — только если монет много: апгрейды бура важнее
+		if (it:GetAttribute("Cost") or 0) > math.max(100, shopCoins * 0.15) then return nil end
+		return (it:GetAttribute("Health") or 0.1) * 100 / math.max(it:GetAttribute("Cost") or 1, 1) * 0.05
+	elseif cat == "Armor" then
+		local slot = it:GetAttribute("ArmorType")
+		slot = slot == "Head" and "Helmet" or slot
+		local c, a = player.Character, it:GetAttribute("Armor") or 0
+		local have = c and slot and (c:GetAttribute(slot) or 0) or math.huge
+		return a > have and (a - have) / math.max(have, 5) or nil
+	end
+end
+-- Броня надевается «другой кнопкой»: Interact (E) по модели брони в мире (Pickup лишь кладёт её в рюкзак).
+-- Проверено: Steel Helmet → Armor 50 → 60.
+wearItem = function(it)
+	local inter = knit("InteractionService", "Interact")
+	local c = player.Character
+	local p = pos(it)
+	if not (inter and c and p) then return false end
+	local a0 = c:GetAttribute("Armor") or 0
+	local r = hrp()
+	if r then r.AssemblyLinearVelocity = Vector3.zero; r.CFrame = CFrame.new(p + Vector3.new(0, 3, 2)) end
+	task.wait(0.3)
+	pcall(function() inter:InvokeServer(it) end)
+	task.wait(0.8)
+	local a1 = c:GetAttribute("Armor") or 0
+	status(("[Gear] надел %s: броня %s → %s"):format(it:GetAttribute("DisplayName") or it.Name, tostring(a0), tostring(a1)))
+	return a1 > a0
+end
+-- Броня, уже лежащая в рюкзаке (подобрана раньше): выбросить и надеть через Interact
+local armorTried = {}
+local function armorStep()
+	for _, src in ipairs({ player:FindFirstChild("Backpack"), player.Character }) do
+		for _, t in ipairs(src and src:GetChildren() or {}) do
+			local id = t:IsA("Tool") and t:GetAttribute("Category") == "Armor" and t:GetAttribute("CarryItemId")
+			if id and not armorTried[id] and gearGain(t) then
+				armorTried[id] = true
+				driveStop()
+				local eq, drop = knit("ToolService", "EquipTool"), knit("ToolService", "Drop")
+				if t.Parent ~= player.Character and eq then pcall(function() eq:InvokeServer(t) end); task.wait(0.4) end
+				if drop then pcall(function() drop:InvokeServer() end) end
+				task.wait(0.8)
+				for _, it in ipairs(workspace.Items:GetChildren()) do
+					if it:GetAttribute("SessionSnapshotItemId") == id then wearItem(it); break end
+				end
+				return true
+			end
+		end
+	end
+	return false
+end
+local function shopStep(center)
+	if os.clock() < shopNext then return false end
+	shopNext = os.clock() + 10
+	local coins = call("CurrencyService", "GetCurrency")
+	if type(coins) ~= "number" or coins <= 0 then return false end
+	shopCoins = coins
+	local bp
+	for _, b in ipairs(CS:GetTagged("BuyPart")) do
+		if b:IsA("BasePart") and not b:GetFullName():find("CutScene", 1, true) and flat(b.Position, center) <= CONFIG.WorkRadius then bp = b end
+	end
+	if not bp then return false end
+	local best, bestGain
+	for _, it in ipairs(workspace.Items:GetChildren()) do
+		local cost = it:GetAttribute("Cost")
+		local p = cost and not shopSkip[it] and CS:HasTag(it, "ShopItem") and not it:FindFirstAncestor("ArmorSaleStand") and pos(it)
+		if p and cost <= coins and (p - bp.Position).Magnitude < 150 then
+			local g = gearGain(it)
+			if g and (not bestGain or g > bestGain) then best, bestGain = it, g end
+		end
+	end
+	if not best then return false end
+	local req, cancel, buy = knit("DragService", "Request"), knit("DragService", "Cancel"), knit("ShopService", "Buy")
+	if not (req and cancel and buy) then return false end
+	Phase = "Покупка снаряжения"
+	driveStop()
+	local name, cost = best:GetAttribute("DisplayName") or best.Name, best:GetAttribute("Cost")
+	shopSkip[best] = true -- одна попытка на товар
+	local r = hrp()
+	if not r then return true end
+	Moving = true
+	pcall(function()
+		local top = bp.CFrame + Vector3.new(0, bp.Size.Y / 2 + 0.8, 0)
+		local placed = false
+		for try = 1, 3 do
+			r = hrp()
+			if not r then return end
+			r.CFrame = CFrame.new(pos(best) + Vector3.new(0, 3, 4)); task.wait(0.4)
+			if req:InvokeServer(best) ~= true then status("[Shop] не взял: " .. name); return end
+			-- держим товар на столе каждый кадр, пока сервер не засчитает (иначе он падает со стола)
+			local t0 = os.clock()
+			while os.clock() - t0 < 1.5 do
+				r = hrp()
+				if r then r.CFrame = CFrame.new(bp.Position + Vector3.new(0, 2, 6)) end
+				pcall(function()
+					best:PivotTo(top)
+					for _, d in ipairs(best:GetDescendants()) do if d:IsA("BasePart") then d.AssemblyLinearVelocity = Vector3.zero end end
+				end)
+				RunService.Heartbeat:Wait()
+			end
+			cancel:InvokeServer(false)
+			for _ = 1, 10 do
+				if (bp:GetAttribute("Cost") or 0) > 0 then placed = true; break end
+				task.wait(0.1)
+			end
+			if placed then break end
+			status(("[Shop] %s не лёг на стол (попытка %d)"):format(name, try))
+		end
+		if not placed then return end
+		-- на столе ровно наш товар и хватает монет
+		local quote = call("ShopService", "GetBuyQuote", bp)
+		if type(quote) ~= "number" or quote <= 0 or quote > cost or quote > coins then
+			status(("[Shop] касса: %s (ждали %s) — не покупаю"):format(tostring(quote), tostring(cost))); return
+		end
+		buy:InvokeServer(bp)
+		task.wait(1)
+		local after = call("CurrencyService", "GetCurrency")
+		if type(after) ~= "number" or after >= coins then status("[Shop] покупка не прошла: " .. name); return end
+		Stats.bought = (Stats.bought or 0) + 1
+		shopNext = os.clock() + 1 -- купили — сразу смотрим следующий товар
+		status(("[Shop] куплено: %s за %d монет"):format(name, coins - after))
+		r = hrp()
+		if r then r.CFrame = CFrame.new(pos(best) + Vector3.new(0, 3, 3)) end
+		task.wait(0.3)
+		if best:GetAttribute("Category") == "Armor" then wearItem(best) else pickupItem(best) end
+	end)
+	Moving = false
 	return true
 end
 
@@ -1657,14 +1996,64 @@ local function finalWallAhead(dp)
 end
 
 -- Мозг авто-фарма: каждый тик выбираем самое важное дело
+-- После смерти вещи лежат в сундуке смерти (модель с ItemDatabaseId/Name *DeathChest*): забираем первым делом
+-- через DeathChestService.TakeAllItems(сундук) — так это делает сама игра.
+local deathTried = setmetatable({}, { __mode = "k" })
+local function deathChestStep()
+	local take = knit("DeathChestService", "TakeAllItems")
+	if not take then return false end
+	for _, it in ipairs(groundItems()) do
+		local id = tostring(it:GetAttribute("ItemDatabaseId") or it.Name)
+		if id:find("DeathChest") and (deathTried[it] or 0) < 3 and pos(it) then
+			deathTried[it] = (deathTried[it] or 0) + 1
+			Phase = "Забираю вещи из сундука смерти"
+			driveStop()
+			if not clearAround(pos(it), 25) and deathTried[it] < 3 then return true end
+			local r = hrp()
+			if r then r.AssemblyLinearVelocity = Vector3.zero; r.CFrame = CFrame.new(pos(it) + Vector3.new(0, 3, 3)) end
+			task.wait(0.4)
+			local ok, res = pcall(function() return take:InvokeServer(it) end)
+			task.wait(1)
+			status(("[Death] сундук смерти: %s"):format(it.Parent and ("не забрал (" .. tostring(res) .. ")") or "вещи забраны"))
+			return true
+		end
+	end
+	return false
+end
+
+-- Бур едет быстрее мобов (~30 st/с против ~16): от мобов у бура выгоднее уехать, чем драться/прятаться.
+-- «Застрял» — за рулём, но за 4 с почти не сдвинулись (упёрлись в стену/скалу) — тогда уже бой.
+local progX, progAt = nil, 0
+local function drillStuck(dp)
+	if not driveStarted then progX, progAt = dp, os.clock(); return false end
+	if not progX or (dp - progX).Magnitude > 6 then progX, progAt = dp, os.clock(); return false end
+	return os.clock() - progAt > 4
+end
+
+local hordeFight = false
+local wallSeen, wallHitAt = setmetatable({}, { __mode = "k" }), 0
 local function autoStep()
 	if not alive() then Phase = "Ждём возрождения"; return end
 	if workspace:GetAttribute("InCutScene") == true then Phase = "Катсцена"; return end
+	if heal(60) then Phase = "Лечусь"; return end
+	if not inDungeon() and deathChestStep() then return end
 	if hpPct() < CONFIG.GuardHpPct then
 		if inDungeon() then exitDungeon("мало HP") end
-		Phase = "Укрытие (мало HP)"
-		hide("мало HP")
-		return
+		local d0 = getDrill()
+		local f0 = d0 and d0:GetAttribute(CONFIG.FuelAttr) or 0
+		if hpPct() >= 35 and not poisoned() and d0 and f0 >= CONFIG.DriveMinFuel and not drillStuck(pos(d0))
+			and not finalWallAhead(pos(d0)) then
+			heal(CONFIG.GuardHpPct)
+			Phase = "Мало HP — уезжаю от мобов"
+			drive()
+			return
+		end
+		if dangerNear() then
+			Phase = "Укрытие (мало HP)"
+			hide("мало HP")
+			return
+		end
+		Phase = "Мало HP, мобов нет — еду дальше"
 	end
 	if inDungeon() then return dungeonRun() end
 
@@ -1679,25 +2068,97 @@ local function autoStep()
 	if not dp then Phase = "Бур не найден"; return end
 	local fp, fuel = fuelPct()
 
-	if fp < CONFIG.FuelTargetPct and #fuelTools() > 0 and os.clock() > refuelNext then Phase = "Заправка"; refuel(); return end
+	-- Финальная стена (босс-бар): волна не кончится, пока стена цела. Бур, упёршийся в стену, ломает её сам,
+	-- пока есть топливо, — водитель не нужен. Поэтому: доезжаем до стены, а пока её HP падает — сидим в укрытии
+	-- подальше от волны. Перестала падать (бур откатился) — подъезжаем снова.
+	local wall = finalWallAhead(dp)
+	if wall and fuel >= CONFIG.DriveMinFuel then
+		local function track()
+			local h = wall:GetAttribute("Health") or 0
+			if not wallSeen[wall] then wallSeen[wall] = h
+			elseif h < wallSeen[wall] then wallSeen[wall], wallHitAt = h, os.clock() end
+			return h
+		end
+		track()
+		if os.clock() - wallHitAt < 4 then
+			Phase = ("Бур ломает стену сам (%s HP) — жду в укрытии"):format(tostring(wall:GetAttribute("Health")))
+			hide("бур ломает стену", function()
+				local h = track()
+				return wall.Parent ~= nil and h > 0 and os.clock() - wallHitAt < 4 and fuelPct() > 3
+			end)
+			return
+		end
+		heal(75)
+		Phase = "Подъезжаю к финальной стене"
+		drive()
+		return
+	end
+
+	-- монстры у бура: пока они рядом, они бьют и водителя (и того, кто заправляет) — сначала разбираемся с ними
+	local near = enemies(45, dp)
+	if #near > 0 and fuel >= CONFIG.DriveMinFuel and not drillStuck(dp) and not gateNear(dp) then
+		heal(70)
+		Phase = ("Уезжаю от мобов (%d)"):format(#near)
+		drive()
+		return
+	end
+	-- орда (волна после катсцены/финальной стены: 10+ гоблинов и брутов) — в бой не лезем, пережидаем в укрытии
+	-- орда (волна: 10+ гоблинов и брутов) сама не уходит — выбиваем по одному: выходим при HP ≥ 90%,
+	-- бьём самого отбившегося от толпы, при HP < Guard уходим в укрытие до SafeHp и повторяем
+	if #near >= 4 then
+		if hpPct() < CONFIG.SafeHpPct + 10 and heal(CONFIG.SafeHpPct + 10) then return end
+		if hpPct() >= CONFIG.SafeHpPct + 10 then hordeFight = true end
+		if not hordeFight then Phase = ("Орда (%d): восстанавливаюсь"):format(#near); hide("орда у бура: " .. #near); return end
+		Phase = ("Орда (%d): бью по одному"):format(#near)
+		driveStop()
+		-- самый высокий (Goblin Brute) — встаём ему на макушку и бьём сверху: мелкие гоблины туда не достают
+		local tall, th
+		for _, m in ipairs(near) do
+			local ok, _, size = pcall(m.GetBoundingBox, m)
+			if ok and size.Y > 7 and (not th or size.Y > th) then tall, th = m, size.Y end
+		end
+		if tall then
+			killIdx = 1 -- позиция «над макушкой»
+			killOne(tall)
+		else
+			-- остались низкие — бьём крайнего с дистанции, со стороны от толпы
+			local c = Vector3.zero
+			for _, m in ipairs(near) do c += pos(m) or dp end
+			c /= #near
+			local best, bd
+			for _, m in ipairs(near) do
+				local p = pos(m)
+				if p and (not bd or (p - c).Magnitude > bd) then best, bd = m, (p - c).Magnitude end
+			end
+			hordeKill(best, c)
+		end
+		if hpPct() < CONFIG.GuardHpPct + 5 then hordeFight = false end
+		return
+	end
+	hordeFight = false
+	if #near > 0 then
+		-- сидеть за рулём под ударами нельзя: либо бой (HP хватает), либо укрытие
+		if hpPct() < CONFIG.GuardHpPct then Phase = "Укрытие (мобы у бура)"; hide("мобы у бура"); return end
+		heal(70)
+		Phase = "Бой у бура"
+		driveStop()
+		-- бьём с дистанции своего оружия, со стороны, противоположной остальным мобам
+		local c = Vector3.zero
+		for _, m in ipairs(near) do c += pos(m) or dp end
+		hordeKill(near[1], #near > 1 and c / #near or (hrp() and hrp().Position or dp))
+		return
+	end
+
+	if os.clock() > refuelNext and ((fp < CONFIG.FuelTargetPct and (#fuelTools() > 0 or #corpses() > 0)) or (fp < 90 and #corpses() >= 3)) then Phase = "Заправка"; refuel(); return end
 	if sellStep(dp) then return end
+	if shopStep(dp) then return end
+	if armorStep() then Phase = "Надеваю броню"; return end
 	if upgradeStep() then Phase = "Прокачка бура"; return end
 
 	local g, key = gateNear(dp)
 	if g then
 		if hpPct() < CONFIG.SafeHpPct then driveStop(); Phase = "Жду HP перед подземельем"; return end
 		Phase = "Вход в подземелье"; enterGate(g, key); return
-	end
-
-	-- монстры у бура: пока они рядом, они бьют и водителя — убиваем, если HP позволяет
-	local near = enemies(45, dp)
-	if #near > 0 then
-		-- сидеть за рулём под ударами нельзя: либо бой (HP хватает), либо укрытие
-		if hpPct() < CONFIG.GuardHpPct + 15 then Phase = "Укрытие (мобы у бура)"; hide("мобы у бура"); return end
-		Phase = "Бой у бура"
-		driveStop()
-		killOne(near[1])
-		return
 	end
 
 	if chestStep(dp, CONFIG.WorkRadius) then Phase = "Сундуки"; return end
@@ -2323,8 +2784,9 @@ task.spawn(function()
 			vDmg.Text = d and tostring(1 + (d:GetAttribute("DrillPower") or 0) + (d:GetAttribute("BonusDamage") or 0)) or "—"
 			local t = math.floor(Stats.start and (os.clock() - Stats.start) or 0)
 			vTime.Text = ("%d:%02d:%02d"):format(t // 3600, t % 3600 // 60, t % 60)
-			counters.Text = ("Сундуки %d · Лут %d · Данжи %d · Убито %d\nАпгрейды %d · Заправки %d · Продажи %d · Укрытия %d")
-				:format(Stats.chests, Stats.items, Stats.dungeons, Stats.kills, Stats.upgrades, Stats.refuels, Stats.sells, Stats.hides)
+			counters.Text = ("Сундуки %d · Лут %d · Данжи %d · Убито %d · Укрытия %d\nАпгрейды %d · Покупки %d · Аптечки %d (есть %d) · Заправки %d · Продажи %d")
+				:format(Stats.chests, Stats.items, Stats.dungeons, Stats.kills, Stats.hides,
+					Stats.upgrades, Stats.bought or 0, Stats.heals or 0, #medkits(), Stats.refuels, Stats.sells)
 			subLabel.Text = State.Auto and ("● " .. Phase) or "Drill to Earth's Core"
 			if (autoBtn.Text:find("ОСТАНОВИТЬ", 1, true) ~= nil) ~= State.Auto then renderAuto() end
 		end)
@@ -2393,6 +2855,6 @@ getgenv().DF = { State = State, CONFIG = CONFIG, Stats = Stats, status = status,
 	drive = drive, driveStop = driveStop, refuel = refuel, fuelPct = fuelPct, fuelTools = fuelTools,
 	upgradeStep = upgradeStep, skipCutscene = skipCutscene, autoStep = autoStep, lootStep = lootStep,
 	gateNear = gateNear, enterGate = enterGate, exitDungeon = exitDungeon, dungeonRun = dungeonRun,
-	finalWallAhead = finalWallAhead, phase = function() return Phase end }
+	finalWallAhead = finalWallAhead, shopStep = shopStep, phase = function() return Phase end }
 status("[DrillFarm] Загружен")
 end)()
