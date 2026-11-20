@@ -50,6 +50,8 @@ local CONFIG = {
 	MonsterFilter   = {},              -- пусто = все монстры
 	HighlightColor  = Color3.fromRGB(255, 60, 60),
 
+	SellKeepRarity  = { "Legendary", "Mythic", "Exotic", "Secret", "Divine" }, -- не продавать
+	SellKeepCategory= { "Fuel" },        -- не продавать (топливо)
 	MoveSpeed       = 540,              -- студов/сек при перелёте к предмету (меньше = безопаснее)
 	PickupDelay     = 0.6,             -- пауза после подбора, сек
 	Tick            = 0.25,
@@ -64,7 +66,7 @@ local player   = Players.LocalPlayer
 local Running = true
 local Connections = {}
 local State = { Farm=false, Collect=false, Ammo=false, AutoBuy=false,
-                Fuel=false, Gate=false, Burn=false, Highlight=false, Noclip=false }
+                Fuel=false, Gate=false, Burn=false, Highlight=false, Noclip=false, AutoSell=false }
 
 ----------------------------------------------------------------- HELPERS
 local function hrp()
@@ -259,11 +261,16 @@ local function nearestSellPart()
 end
 
 -- Сумка полна: к точке продажи (если есть), иначе к дрели
+local sellAll -- определяется ниже
 local function onBagFull(who)
 	local sell = nearestSellPart()
 	if sell then
 		tp(sell)
 		print("[" .. who .. "] Сумка полна — ТП к точке продажи")
+		if State.AutoSell and sellAll then
+			local ok, err = pcall(sellAll, sell)
+			if not ok then warn("[Sell] ошибка: " .. tostring(err)) end
+		end
 	else
 		local drill = workspace:FindFirstChild(CONFIG.DrillName)
 		if drill then tp(drill, Vector3.new(0, 8, 0)) end
@@ -273,8 +280,8 @@ end
 
 local function farmStep()
 	if bagFull() then
-		State.Farm = false
 		onBagFull("Farm")
+		if bagFull() then State.Farm = false end
 		return
 	end
 	local node = nearest(oreNodes(), CONFIG.OreSearchRadius)
@@ -379,8 +386,8 @@ local function collectItems()
 	for _, it in ipairs(items) do
 		if not State.Collect then return end
 		if bagFull() then
-			State.Collect = false
 			onBagFull("Collect")
+			if bagFull() then State.Collect = false end
 			return
 		end
 		local v = it:GetAttribute("Value") or 0
@@ -425,6 +432,116 @@ pickupOresNear = function(center, radius)
 		if found then return end
 		task.wait(0.3)
 	until os.clock() - t0 > 2
+end
+
+-- Автопродажа: выкидываем предметы на стол продажи по одному.
+-- Выпавший предмет проверяем по его атрибутам (Rarity/Category); если его нельзя
+-- продавать (легендарка/топливо) — сразу поднимаем обратно. Затем подбираем мешочек с золотом.
+local function invEntries()
+	local rf = knit("CarryInventoryService", "GetInventory")
+	if not rf then return {} end
+	local ok, inv = pcall(function() return rf:InvokeServer() end)
+	if not ok or type(inv) ~= "table" then return {} end
+	local list = {}
+	local function walk(t, depth)
+		for k, v in pairs(t) do
+			if type(v) == "table" then
+				if v.ItemDatabaseId or v.ItemId or v.Id or v.GroupId or v.Name then
+					table.insert(list, { key = k, data = v })
+				elseif depth < 2 then
+					walk(v, depth + 1)
+				end
+			end
+		end
+	end
+	walk(inv, 0)
+	return list
+end
+
+local function tryDrop(e)
+	local usage = attr(CONFIG.BagCountAttr)
+	local d = e.data
+	local args = { e.key, d.GroupId, d.Id, d.ItemId, d.ItemDatabaseId, d.Name }
+	local remotes = {
+		knit("CarryInventoryService", "DropGroup"),
+		knit("ToolService", "DropSpecificItem"),
+	}
+	for _, rf in ipairs(remotes) do
+		for _, a in ipairs(args) do
+			if a ~= nil then
+				pcall(function() rf:InvokeServer(a) end)
+				task.wait(0.4)
+				if attr(CONFIG.BagCountAttr) ~= usage then return true end
+			end
+		end
+	end
+	return false
+end
+
+sellAll = function(sellPart)
+	local folder = workspace:FindFirstChild("Items")
+	local pickup = knit("CarryInventoryService", "Pickup")
+	if not folder or not pickup then return end
+	local spot = sellPart.Parent and sellPart.Parent.Parent
+		and sellPart.Parent.Parent:FindFirstChild("SellSpot", true) or sellPart
+	tp(spot, Vector3.new(0, 4, 0))
+	task.wait(0.3)
+	local mine = {}       -- то, что выкинули мы (продаётся)
+	local kept = {}       -- ключи, которые нельзя продавать
+	for _ = 1, 40 do
+		local entries, dropped = invEntries(), false
+		for _, e in ipairs(entries) do
+			if not kept[e.key] then
+				local before = {}
+				for _, it in ipairs(folder:GetChildren()) do before[it] = true end
+				if tryDrop(e) then
+					dropped = true
+					task.wait(0.3)
+					for _, it in ipairs(folder:GetChildren()) do
+						if not before[it] then
+							local rar = it:GetAttribute("Rarity") or ""
+							local cat = it:GetAttribute("Category") or ""
+							if hasKey(rar, CONFIG.SellKeepRarity) or hasKey(cat, CONFIG.SellKeepCategory) then
+								pcall(function() pickup:InvokeServer(it) end) -- вернуть в сумку
+								kept[e.key] = true
+								print("[Sell] оставляю: " .. (it:GetAttribute("DisplayName") or it.Name))
+							else
+								mine[it] = true
+								print("[Sell] продаю: " .. (it:GetAttribute("DisplayName") or it.Name))
+							end
+						end
+					end
+					break -- инвентарь изменился — перечитать
+				else
+					kept[e.key] = true -- не получилось выкинуть — не трогаем
+				end
+			end
+		end
+		if not dropped then break end
+		tp(spot, Vector3.new(0, 4, 0))
+	end
+	if next(mine) == nil then
+		print("[Sell] нечего продавать (или не удалось выкинуть — нужен лог SimpleSpy)")
+		return
+	end
+	-- ждём мешочек с золотом и подбираем всё новое рядом, что выкинули не мы
+	local before = {}
+	for _, it in ipairs(folder:GetChildren()) do before[it] = true end
+	local t0 = os.clock()
+	while os.clock() - t0 < 6 do
+		for _, it in ipairs(folder:GetChildren()) do
+			if not mine[it] and dist(it) < 30 and (not before[it] or not it:GetAttribute("Cost")) then
+				local n = string.lower(it.Name .. " " .. tostring(it:GetAttribute("DisplayName") or ""))
+				if n:find("gold") or n:find("coin") or n:find("bag") or n:find("money") or n:find("cash") then
+					moveTo(it)
+					pcall(function() pickup:InvokeServer(it) end)
+					print("[Sell] подобрал: " .. it.Name)
+					mine[it] = true
+				end
+			end
+		end
+		task.wait(0.4)
+	end
 end
 
 -- Только предметы из Workspace.Items; сундуки/двери/NPC не трогаем
@@ -877,6 +994,7 @@ toggle("Farm", "Авто-фарм руды")
 toggle("Collect", "Авто-сбор")
 toggle("Ammo", "Патроны (25 st)")
 toggle("AutoBuy", "Автопокупка")
+toggle("AutoSell", "Автопродажа (сумка полна)")
 section("Бур")
 toggle("Fuel", "Заправка")
 toggle("Gate", "Ворота подземелья")
