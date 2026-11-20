@@ -335,13 +335,16 @@ end)
 
 -- Сумка полна: к точке продажи (если есть), иначе к дрели
 local sellAll -- определяется ниже
+local Selling = false -- пока идёт продажа, остальные функции ждут
 local function onBagFull(who)
 	-- Автопродажа включена и есть стол продажи — продаём; иначе — к дрели
 	local sell = State.AutoSell and nearestSellPart()
 	if sell and sellAll then
 		tp(sell)
 		status("[" .. who .. "] Сумка полна — продажа")
+		Selling = true
 		local ok, err = pcall(sellAll, sell)
+		Selling = false
 		if not ok then warn("[Sell] ошибка: " .. tostring(err)) end
 		if not bagFull() then return end
 	end
@@ -802,7 +805,7 @@ local loops = {
 for name, fn in pairs(loops) do
 	task.spawn(function()
 		while Running do
-			if State[name] then pcall(fn) end
+			if State[name] and not Selling then pcall(fn) end
 			task.wait(CONFIG.Tick)
 		end
 	end)
