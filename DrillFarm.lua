@@ -437,42 +437,35 @@ end
 -- Автопродажа: выкидываем предметы на стол продажи по одному.
 -- Выпавший предмет проверяем по его атрибутам (Rarity/Category); если его нельзя
 -- продавать (легендарка/топливо) — сразу поднимаем обратно. Затем подбираем мешочек с золотом.
+-- GetInventory() -> { Capacity, Usage, Entries = { {Id, Key, Name, Rarity, Category, DisplayName, ...} } }
 local function invEntries()
 	local rf = knit("CarryInventoryService", "GetInventory")
 	if not rf then return {} end
 	local ok, inv = pcall(function() return rf:InvokeServer() end)
-	if not ok or type(inv) ~= "table" then return {} end
+	if not ok or type(inv) ~= "table" or type(inv.Entries) ~= "table" then return {} end
 	local list = {}
-	local function walk(t, depth)
-		for k, v in pairs(t) do
-			if type(v) == "table" then
-				if v.ItemDatabaseId or v.ItemId or v.Id or v.GroupId or v.Name then
-					table.insert(list, { key = k, data = v })
-				elseif depth < 2 then
-					walk(v, depth + 1)
-				end
-			end
-		end
+	for _, e in pairs(inv.Entries) do
+		if type(e) == "table" and e.Id then table.insert(list, e) end
 	end
-	walk(inv, 0)
 	return list
+end
+
+local function sellable(e)
+	return not hasKey(tostring(e.Rarity or ""), CONFIG.SellKeepRarity)
+		and not hasKey(tostring(e.Category or ""), CONFIG.SellKeepCategory)
 end
 
 local function tryDrop(e)
 	local usage = attr(CONFIG.BagCountAttr)
-	local d = e.data
-	local args = { e.key, d.GroupId, d.Id, d.ItemId, d.ItemDatabaseId, d.Name }
 	local remotes = {
 		knit("CarryInventoryService", "DropGroup"),
 		knit("ToolService", "DropSpecificItem"),
 	}
 	for _, rf in ipairs(remotes) do
-		for _, a in ipairs(args) do
-			if a ~= nil then
-				pcall(function() rf:InvokeServer(a) end)
-				task.wait(0.4)
-				if attr(CONFIG.BagCountAttr) ~= usage then return true end
-			end
+		for _, a in ipairs({ e.Id, e.Key }) do
+			pcall(function() rf:InvokeServer(a) end)
+			task.wait(0.4)
+			if attr(CONFIG.BagCountAttr) ~= usage then return true end
 		end
 	end
 	return false
@@ -486,38 +479,34 @@ sellAll = function(sellPart)
 		and sellPart.Parent.Parent:FindFirstChild("SellSpot", true) or sellPart
 	tp(spot, Vector3.new(0, 4, 0))
 	task.wait(0.3)
-	local mine = {}       -- то, что выкинули мы (продаётся)
-	local kept = {}       -- ключи, которые нельзя продавать
-	for _ = 1, 40 do
-		local entries, dropped = invEntries(), false
-		for _, e in ipairs(entries) do
-			if not kept[e.key] then
-				local before = {}
-				for _, it in ipairs(folder:GetChildren()) do before[it] = true end
-				if tryDrop(e) then
-					dropped = true
-					task.wait(0.3)
-					for _, it in ipairs(folder:GetChildren()) do
-						if not before[it] then
-							local rar = it:GetAttribute("Rarity") or ""
-							local cat = it:GetAttribute("Category") or ""
-							if hasKey(rar, CONFIG.SellKeepRarity) or hasKey(cat, CONFIG.SellKeepCategory) then
-								pcall(function() pickup:InvokeServer(it) end) -- вернуть в сумку
-								kept[e.key] = true
-								print("[Sell] оставляю: " .. (it:GetAttribute("DisplayName") or it.Name))
-							else
-								mine[it] = true
-								print("[Sell] продаю: " .. (it:GetAttribute("DisplayName") or it.Name))
-							end
-						end
+	local mine, failed = {}, {}
+	for _ = 1, 60 do
+		local target
+		for _, e in ipairs(invEntries()) do
+			if sellable(e) and not failed[e.Id] then target = e; break end
+		end
+		if not target then break end
+		local before = {}
+		for _, it in ipairs(folder:GetChildren()) do before[it] = true end
+		if tryDrop(target) then
+			print("[Sell] продаю: " .. tostring(target.DisplayName or target.Name))
+			task.wait(0.2)
+			for _, it in ipairs(folder:GetChildren()) do
+				if not before[it] then
+					-- страховка: выпало не то (легендарка/топливо) — поднять обратно
+					local rar, cat = it:GetAttribute("Rarity") or "", it:GetAttribute("Category") or ""
+					if hasKey(rar, CONFIG.SellKeepRarity) or hasKey(cat, CONFIG.SellKeepCategory) then
+						pcall(function() pickup:InvokeServer(it) end)
+						print("[Sell] выпало не то, вернул: " .. it.Name)
+					else
+						mine[it] = true
 					end
-					break -- инвентарь изменился — перечитать
-				else
-					kept[e.key] = true -- не получилось выкинуть — не трогаем
 				end
 			end
+		else
+			failed[target.Id] = true
+			print("[Sell] не удалось выкинуть: " .. tostring(target.DisplayName or target.Name))
 		end
-		if not dropped then break end
 		tp(spot, Vector3.new(0, 4, 0))
 	end
 	if next(mine) == nil then
