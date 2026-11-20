@@ -36,6 +36,8 @@ local CONFIG = {
 	RefuelPromptKey = "Fuel",          -- подстрока в ActionText/Name промпта
 	GateName        = "DungeonGate_",  -- Workspace.DungeonGate_Tier1B и т.д.
 	GateStopDist    = 60,
+	DriveMinFuel    = 3,               -- Авто-поездка: стоп, когда топлива меньше (ед.)
+	DriveMinHpPct   = 30,              -- Авто-поездка: стоп, когда здоровья меньше (%)
 	GatePromptKey   = "Enter",
 
 	-- Трупы
@@ -73,7 +75,7 @@ local Running = true
 local Selling = false -- пока идёт продажа, остальные функции ждут
 local Connections = {}
 local State = { Farm=false, Collect=false, Ammo=false, AutoBuy=false,
-                Fuel=false, Gate=false, Burn=false, Highlight=false, Noclip=false, AutoSell=false, KillAura=false, Dungeon=false }
+                Fuel=false, Gate=false, Burn=false, Highlight=false, Noclip=false, AutoSell=false, KillAura=false, Dungeon=false, AutoDrive=false }
 local function collecting() return State.Collect or State.Dungeon end
 
 -- Статус: печать в F9 + строка внизу меню (видно и без консоли)
@@ -1007,6 +1009,69 @@ local function fuelStep()
 	end
 end
 
+-- Авто-поездка бура: DrillService.StartDriving → в LocalDriverSeat → UpdateDriverThrottle(1) каждый тик.
+-- Нужна, чтобы не срабатывал телепорт обратно к буру, когда мы далеко уходим от него.
+-- Защиты: все вызовы в pcall; стоп при пустом топливе, низком здоровье, смерти и у ворот подземелья;
+-- при любом выключении газ сбрасывается и мы выходим из водительского места.
+local driveStarted = false
+local function driveCall(name, ...)
+	local r = knit("DrillService", name)
+	if not r then return false end
+	local args = { ... }
+	local ok, res = pcall(function()
+		if r:IsA("RemoteFunction") then return r:InvokeServer(table.unpack(args)) end
+		r:FireServer(table.unpack(args)); return true
+	end)
+	return ok and res
+end
+local function driveStop(why)
+	if driveStarted then
+		local d = getDrill()
+		local seat = d and d:FindFirstChild("LocalDriverSeat", true)
+		if seat then pcall(function() seat.ThrottleFloat = 0; seat.Throttle = 0 end) end
+		driveCall("UpdateDriverThrottle", 0)
+		driveCall("StopDriving")
+		driveStarted = false
+	end
+	if why then status("[Drive] стоп: " .. why) end
+	State.AutoDrive = false
+end
+local function driveStep()
+	local drill = getDrill()
+	local c = player.Character
+	local hum = c and c:FindFirstChildOfClass("Humanoid")
+	if not (drill and hum) then return end
+	if hum.Health <= 0 then return driveStop("персонаж умер") end
+	if hum.Health < hum.MaxHealth * CONFIG.DriveMinHpPct / 100 then return driveStop("мало здоровья") end
+	local fuel = drill:GetAttribute(CONFIG.FuelAttr)
+	if fuel and fuel < CONFIG.DriveMinFuel then return driveStop("кончилось топливо") end
+	for _, g in ipairs(workspace:GetChildren()) do
+		if g:IsA("Model") and string.sub(g.Name, 1, #CONFIG.GateName) == CONFIG.GateName and not g.Name:find("Tutorial") then
+			local p1, p2 = pos(g), pos(drill)
+			if p1 and p2 and (p1 - p2).Magnitude <= CONFIG.GateStopDist then return driveStop("доехали до ворот " .. g.Name) end
+		end
+	end
+	if drill:GetAttribute("DriverUserId") ~= player.UserId then
+		-- сесть: подлететь к месту водителя и попросить сервер
+		local seat = drill:FindFirstChild("LocalDriverSeat", true)
+		local r = hrp()
+		if seat and r then r.CFrame = seat.CFrame * CFrame.new(0, 3, 0) end
+		task.wait(0.3)
+		if not driveCall("StartDriving") then
+			status("[Drive] StartDriving не принят — повтор")
+			task.wait(1.5)
+			return
+		end
+		driveStarted = true
+		status("[Drive] за рулём")
+		task.wait(0.5)
+	end
+	-- газ даём через само место водителя: клиент игры читает seat.ThrottleFloat и сам шлёт UpdateDriverThrottle
+	-- (если слать самим, игра перебивает наш газ своим нулём)
+	local seat = drill:FindFirstChild("LocalDriverSeat", true)
+	if seat then pcall(function() seat.ThrottleFloat = 1; seat.Throttle = 1 end) end
+end
+
 local function gateStep()
 	local drill = getDrill()
 	if not drill then return end
@@ -1338,6 +1403,7 @@ local loops = {
 	Ammo = function() collectStep(true) end, AutoBuy = autoBuyStep,
 	Fuel = fuelStep, Gate = gateStep, Burn = burnStep,
 	KillAura = function() killStep(CONFIG.KillRadius, true) end, Dungeon = dungeonStep,
+	AutoDrive = driveStep,
 }
 for name, fn in pairs(loops) do
 	task.spawn(function()
@@ -1349,6 +1415,13 @@ for name, fn in pairs(loops) do
 end
 task.spawn(function()
 	while Running do pcall(highlightStep); task.wait(1) end
+end)
+-- тумблер выключили вручную — сбросить газ и выйти из водительского места
+task.spawn(function()
+	while Running do
+		if driveStarted and not State.AutoDrive then pcall(driveStop, "выключено") end
+		task.wait(0.5)
+	end
 end)
 
 -- Noclip: всегда, если включён тумблер, и автоматически во время перелётов скрипта
@@ -1639,6 +1712,7 @@ toggle("KillAura", "Kill Aura (из-под земли)")
 section("Бур")
 toggle("Fuel", "Заправка")
 toggle("Gate", "Ворота подземелья")
+toggle("AutoDrive", "Авто-поездка бура")
 action("Телепорт к дрели", function(b)
 	local drill = getDrill()
 	if drill then
@@ -1726,6 +1800,7 @@ fitHeight()
 -- Закрыть скрипт полностью
 local function shutdown()
 	Running = false
+	pcall(function() if driveStarted then driveStop() end end)
 	pcall(function() game:GetService("ContextActionService"):UnbindAction("DF_MenuWheel") end)
 	for k in pairs(State) do State[k] = false end
 	for _, c in ipairs(Connections) do c:Disconnect() end
@@ -1779,5 +1854,5 @@ getgenv().DF = { State = State, CONFIG = CONFIG, Learned = Learned, status = sta
 	chestInfo = chestInfo, chestNode = chestNode, usePrompt = usePrompt, moveTo = moveTo, inventory = inventory,
 	oreNodes = oreNodes, farmStep = farmStep, oreAlive = oreAlive, equipPickaxe = equipPickaxe, equipWeapon = equipWeapon, bagUsage = bagUsage,
 	tryDrop = tryDrop, invEntries = invEntries, nearestSellPart = nearestSellPart, isMySack = isMySack, sellAll = sellAll,
-	enterGate = enterGate, enemies = enemies, killOne = killOne, killStep = killStep, dungeonStep = dungeonStep }
+	enterGate = enterGate, driveStep = driveStep, driveStop = driveStop, enemies = enemies, killOne = killOne, killStep = killStep, dungeonStep = dungeonStep }
 status("[DrillFarm] Загружен")
