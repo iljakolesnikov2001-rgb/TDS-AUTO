@@ -413,62 +413,71 @@ local closeBtn = new("TextButton", {
 corner(closeBtn, 8)
 
 -- Контент
--- Прокручиваемый контент (для телефонов)
-local content = new("ScrollingFrame", {
+-- Прокручиваемый контент: своя реализация (колесо, ЛКМ, палец)
+local view = new("Frame", {
 	Size = UDim2.new(1, 0, 0, 300), BackgroundTransparency = 1, BorderSizePixel = 0,
-	LayoutOrder = 1, CanvasSize = UDim2.new(),
-	ScrollBarThickness = 3, ScrollBarImageColor3 = T.Accent, ScrollingDirection = Enum.ScrollingDirection.Y,
-	ElasticBehavior = Enum.ElasticBehavior.Always,
+	ClipsDescendants = true, LayoutOrder = 1,
 }, main)
+local content = new("Frame", {
+	Size = UDim2.new(1, -6, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+	BackgroundTransparency = 1, BorderSizePixel = 0,
+}, view)
 local list = new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, content)
-new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12),
+new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 6),
 	PaddingBottom = UDim.new(0, 12) }, content)
+local thumb = new("Frame", { Size = UDim2.new(0, 3, 0, 40), Position = UDim2.new(1, -5, 0, 0),
+	BackgroundColor3 = T.Accent, BackgroundTransparency = 0.3, BorderSizePixel = 0 }, view)
+corner(thumb, 2)
 
+local scrollY, scrollMoved, sliderActive = 0, false, false
+local function contentH() return list.AbsoluteContentSize.Y + 12 end
+local function setScroll(y)
+	local viewH = view.AbsoluteSize.Y
+	local maxY = math.max(0, contentH() - viewH)
+	scrollY = math.clamp(y, 0, maxY)
+	content.Position = UDim2.new(0, 0, 0, -scrollY)
+	thumb.Visible = maxY > 0
+	if maxY > 0 then
+		local th = math.max(24, viewH * viewH / contentH())
+		thumb.Size = UDim2.new(0, 3, 0, th)
+		thumb.Position = UDim2.new(1, -5, 0, (viewH - th) * scrollY / maxY)
+	end
+end
 -- Высота = контент, но не больше 65% экрана
 local function fitHeight()
 	local vp = workspace.CurrentCamera.ViewportSize.Y
-	local h = list.AbsoluteContentSize.Y + 12
-	content.Size = UDim2.new(1, 0, 0, math.min(h, math.floor(vp * 0.65) - 44))
-	content.CanvasSize = UDim2.new(0, 0, 0, h)
+	view.Size = UDim2.new(1, 0, 0, math.min(contentH(), math.floor(vp * 0.65) - 44))
+	setScroll(scrollY)
 end
--- Скролл мышью: колесо + перетаскивание зажатой ЛКМ (для эмуляторов)
-local scrollMoved = false
-local function setCanvas(y)
-	local maxY = math.max(0, content.AbsoluteCanvasSize.Y - content.AbsoluteWindowSize.Y)
-	content.CanvasPosition = Vector2.new(0, math.clamp(y, 0, maxY))
-end
-local function overContent(p)
-	local a, z = content.AbsolutePosition, content.AbsoluteSize
-	return content.Visible and main.Visible and p.X >= a.X and p.X <= a.X + z.X and p.Y >= a.Y and p.Y <= a.Y + z.Y
+local function over(p)
+	local a, z = view.AbsolutePosition, view.AbsoluteSize
+	return main.Visible and view.Visible and p.X >= a.X and p.X <= a.X + z.X and p.Y >= a.Y and p.Y <= a.Y + z.Y
 end
 do
-	local dragging, startY, startCanvas
+	local dragging, startY, startScroll
+	local function isPress(t) return t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch end
 	bind(UIS.InputBegan, function(i)
-		local t = i.UserInputType
-		if t == Enum.UserInputType.MouseButton1
-			and content.ScrollingEnabled and overContent(i.Position) then
-			dragging, startY, startCanvas, scrollMoved = true, i.Position.Y, content.CanvasPosition.Y, false
+		if isPress(i.UserInputType) and not sliderActive and over(i.Position) then
+			dragging, startY, startScroll, scrollMoved = true, i.Position.Y, scrollY, false
 		end
 	end)
-	bind(UIS.InputChanged, function(i, gp)
+	bind(UIS.InputChanged, function(i)
 		local t = i.UserInputType
-		if t == Enum.UserInputType.MouseWheel and not gp and overContent(i.Position) then
-			setCanvas(content.CanvasPosition.Y - i.Position.Z * 40)
-		elseif dragging and content.ScrollingEnabled and t == Enum.UserInputType.MouseMovement then
+		if t == Enum.UserInputType.MouseWheel then
+			if over(i.Position) or over(UIS:GetMouseLocation()) then setScroll(scrollY - i.Position.Z * 40) end
+		elseif dragging and not sliderActive and (t == Enum.UserInputType.MouseMovement or t == Enum.UserInputType.Touch) then
 			local d = i.Position.Y - startY
 			if math.abs(d) > 6 then scrollMoved = true end
-			if scrollMoved then setCanvas(startCanvas - d) end
+			if scrollMoved then setScroll(startScroll - d) end
 		end
 	end)
 	bind(UIS.InputEnded, function(i)
-		local t = i.UserInputType
-		if t == Enum.UserInputType.MouseButton1 then
+		if isPress(i.UserInputType) then
 			dragging = false
-			task.defer(function() scrollMoved = false end)
+			task.delay(0.05, function() scrollMoved = false end)
 		end
 	end)
 end
-
 bind(list:GetPropertyChangedSignal("AbsoluteContentSize"), fitHeight)
 bind(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), fitHeight)
 
@@ -546,7 +555,7 @@ local function slider(title, cfgKey, min, max, step)
 		Size = UDim2.new(1, 0, 0, 20), Position = UDim2.new(0, 0, 0, 24) }, r)
 	hit.InputBegan:Connect(function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-			dragging = true; content.ScrollingEnabled = false; set(i.Position.X)
+			dragging = true; sliderActive = true; set(i.Position.X)
 		end
 	end)
 	bind(UIS.InputChanged, function(i)
@@ -556,7 +565,7 @@ local function slider(title, cfgKey, min, max, step)
 	end)
 	bind(UIS.InputEnded, function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-			dragging = false; content.ScrollingEnabled = true
+			dragging = false; sliderActive = false
 		end
 	end)
 end
@@ -616,7 +625,7 @@ getgenv().DrillFarmClose = shutdown
 local collapsed = false
 minBtn.MouseButton1Click:Connect(function()
 	collapsed = not collapsed
-	content.Visible = not collapsed
+	view.Visible = not collapsed
 	minBtn.Text = collapsed and "+" or "–"
 end)
 bind(UIS.InputBegan, function(i, gp)
