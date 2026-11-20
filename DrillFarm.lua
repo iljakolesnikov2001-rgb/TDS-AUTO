@@ -68,6 +68,13 @@ local Connections = {}
 local State = { Farm=false, Collect=false, Ammo=false, AutoBuy=false,
                 Fuel=false, Gate=false, Burn=false, Highlight=false, Noclip=false, AutoSell=false }
 
+-- Статус: печать в F9 + строка внизу меню (видно и без консоли)
+local StatusLabel
+local function status(msg)
+	print(msg)
+	if StatusLabel then StatusLabel.Text = msg end
+end
+
 ----------------------------------------------------------------- HELPERS
 local function hrp()
 	local c = player.Character
@@ -300,7 +307,7 @@ local function nearestSellPart()
 	local sp = nearest(findSellParts())
 	if sp then lastSellPos = sp.Position; return sp end
 	if not lastSellPos then
-		print("[Sell] стол продажи не найден (ни разу не был прогружен)")
+		status("[Sell] стол продажи не найден (ни разу не был прогружен)")
 		return nil
 	end
 	local r = hrp()
@@ -314,7 +321,7 @@ local function nearestSellPart()
 		task.wait(0.3)
 		sp = nearest(findSellParts())
 	until sp or os.clock() - t0 > 6
-	if not sp then print("[Sell] стол продажи не прогрузился") end
+	if not sp then status("[Sell] стол продажи не прогрузился") end
 	return sp
 end
 -- запоминаем позицию стола, пока он прогружен
@@ -333,14 +340,14 @@ local function onBagFull(who)
 	local sell = State.AutoSell and nearestSellPart()
 	if sell and sellAll then
 		tp(sell)
-		print("[" .. who .. "] Сумка полна — продажа")
+		status("[" .. who .. "] Сумка полна — продажа")
 		local ok, err = pcall(sellAll, sell)
 		if not ok then warn("[Sell] ошибка: " .. tostring(err)) end
 		if not bagFull() then return end
 	end
 	local drill = workspace:FindFirstChild(CONFIG.DrillName)
 	if drill then tpToDrill(drill) end
-	print("[" .. who .. "] Сумка полна — ТП к дрели")
+	status("[" .. who .. "] Сумка полна — ТП к дрели")
 end
 
 local function farmStep()
@@ -526,11 +533,18 @@ local function tryDrop(e)
 		knit("CarryInventoryService", "DropGroup"),
 		knit("ToolService", "DropSpecificItem"),
 	}
-	for _, rf in ipairs(remotes) do
-		for _, a in ipairs({ e.Id, e.Key }) do
-			pcall(function() rf:InvokeServer(a) end)
+	local variants = {
+		{ e.Id }, { e.Key }, { e.Key, 1 }, { e.Id, 1 }, { { e.Id } }, { e.Name },
+	}
+	for _, rf in pairs(remotes) do
+		for _, args in ipairs(variants) do
+			local ok, res = pcall(function() return rf:InvokeServer(table.unpack(args)) end)
 			task.wait(0.4)
-			if attr(CONFIG.BagCountAttr) ~= usage then return true end
+			if attr(CONFIG.BagCountAttr) ~= usage then
+				status("[Sell] выброс сработал: " .. rf.Name .. "(" .. tostring(args[1]) .. ")")
+				return true
+			end
+			if not ok then print("[Sell] " .. rf.Name .. " ошибка: " .. tostring(res)) end
 		end
 	end
 	return false
@@ -554,7 +568,7 @@ sellAll = function(sellPart)
 		local before = {}
 		for _, it in ipairs(folder:GetChildren()) do before[it] = true end
 		if tryDrop(target) then
-			print("[Sell] продаю: " .. tostring(target.DisplayName or target.Name))
+			status("[Sell] продаю: " .. tostring(target.DisplayName or target.Name))
 			task.wait(0.2)
 			for _, it in ipairs(folder:GetChildren()) do
 				if not before[it] then
@@ -562,7 +576,7 @@ sellAll = function(sellPart)
 					local rar, cat = it:GetAttribute("Rarity") or "", it:GetAttribute("Category") or ""
 					if hasKey(rar, CONFIG.SellKeepRarity) or hasKey(cat, CONFIG.SellKeepCategory) then
 						pcall(function() pickup:InvokeServer(it) end)
-						print("[Sell] выпало не то, вернул: " .. it.Name)
+						status("[Sell] выпало не то, вернул: " .. it.Name)
 					else
 						mine[it] = true
 					end
@@ -570,12 +584,12 @@ sellAll = function(sellPart)
 			end
 		else
 			failed[target.Id] = true
-			print("[Sell] не удалось выкинуть: " .. tostring(target.DisplayName or target.Name))
+			status("[Sell] не удалось выкинуть: " .. tostring(target.DisplayName or target.Name))
 		end
 		tp(spot, Vector3.new(0, 4, 0))
 	end
 	if next(mine) == nil then
-		print("[Sell] нечего продавать (или не удалось выкинуть — нужен лог SimpleSpy)")
+		status("[Sell] нечего продавать (или не удалось выкинуть — нужен лог SimpleSpy)")
 		return
 	end
 	-- ждём мешочек с золотом и подбираем всё новое рядом, что выкинули не мы
@@ -589,7 +603,7 @@ sellAll = function(sellPart)
 				if n:find("gold") or n:find("coin") or n:find("bag") or n:find("money") or n:find("cash") then
 					moveTo(it)
 					pcall(function() pickup:InvokeServer(it) end)
-					print("[Sell] подобрал: " .. it.Name)
+					status("[Sell] подобрал: " .. it.Name)
 					mine[it] = true
 				end
 			end
@@ -1133,6 +1147,11 @@ end)
 copyBtn.BackgroundColor3 = T.Off
 copyBtn.TextColor3 = T.Sub
 copyBtn.Text = "Копировать · сначала Scan"
+StatusLabel = new("TextLabel", {
+	Text = "Статус: —", Font = FONT, TextSize = 11, TextColor3 = T.Accent, TextWrapped = true,
+	BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left,
+	Size = UDim2.new(1, 0, 0, 28), LayoutOrder = nextOrder(),
+}, content)
 new("TextLabel", {
 	Text = "RightShift — скрыть  ·  × — закрыть", Font = FONT, TextSize = 11, TextColor3 = T.Sub,
 	BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 14), LayoutOrder = nextOrder(),
