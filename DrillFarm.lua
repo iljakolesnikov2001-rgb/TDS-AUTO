@@ -946,6 +946,16 @@ local function scan(nearOnly)
 					local a = {}
 					for k, v in pairs(d:GetAttributes()) do table.insert(a, k .. "=" .. tostring(v)) end
 					log("[Near]", d.ClassName, d:GetFullName(), table.concat(a, ", "))
+					for _, pr in ipairs(d:GetChildren()) do
+						if pr:IsA("ProximityPrompt") or pr:IsA("Attachment") then
+							for _, q in ipairs(pr:IsA("Attachment") and pr:GetChildren() or { pr }) do
+								if q:IsA("ProximityPrompt") then
+									log("   [Prompt]", q.ActionText, "| Enabled=" .. tostring(q.Enabled),
+										"| Hold=" .. tostring(q.HoldDuration), "| Dist=" .. tostring(q.MaxActivationDistance))
+								end
+							end
+						end
+					end
 				end
 			end
 		end
