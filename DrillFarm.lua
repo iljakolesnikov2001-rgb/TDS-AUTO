@@ -847,9 +847,7 @@ do
 	end)
 	bind(UIS.InputChanged, function(i)
 		local t = i.UserInputType
-		if t == Enum.UserInputType.MouseWheel then
-			if over(i.Position) or over(UIS:GetMouseLocation()) then setScroll(scrollY - i.Position.Z * 40) end
-		elseif dragging and not sliderActive and (t == Enum.UserInputType.MouseMovement or t == Enum.UserInputType.Touch) then
+		if dragging and not sliderActive and (t == Enum.UserInputType.MouseMovement or t == Enum.UserInputType.Touch) then
 			local d = i.Position.Y - startY
 			if math.abs(d) > 6 then scrollMoved = true end
 			if scrollMoved then setScroll(startScroll - d) end
@@ -861,6 +859,18 @@ do
 			task.delay(0.05, function() scrollMoved = false end)
 		end
 	end)
+end
+-- Колесо над меню: скроллим меню и "съедаем" ввод, чтобы камера не зумилась
+do
+	local CAS = game:GetService("ContextActionService")
+	pcall(function() CAS:UnbindAction("DF_MenuWheel") end)
+	CAS:BindActionAtPriority("DF_MenuWheel", function(_, state, input)
+		if state == Enum.UserInputState.Change and (over(input.Position) or over(UIS:GetMouseLocation())) then
+			setScroll(scrollY - input.Position.Z * 40)
+			return Enum.ContextActionResult.Sink
+		end
+		return Enum.ContextActionResult.Pass
+	end, false, 3000, Enum.UserInputType.MouseWheel)
 end
 bind(list:GetPropertyChangedSignal("AbsoluteContentSize"), fitHeight)
 bind(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), fitHeight)
@@ -1067,6 +1077,7 @@ fitHeight()
 -- Закрыть скрипт полностью
 local function shutdown()
 	Running = false
+	pcall(function() game:GetService("ContextActionService"):UnbindAction("DF_MenuWheel") end)
 	for k in pairs(State) do State[k] = false end
 	for _, c in ipairs(Connections) do c:Disconnect() end
 	for _, d in ipairs(workspace:GetDescendants()) do
