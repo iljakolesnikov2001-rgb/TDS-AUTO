@@ -413,13 +413,25 @@ local closeBtn = new("TextButton", {
 corner(closeBtn, 8)
 
 -- Контент
-local content = new("Frame", {
-	Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-	BackgroundTransparency = 1, LayoutOrder = 1,
+-- Прокручиваемый контент (для телефонов)
+local content = new("ScrollingFrame", {
+	Size = UDim2.new(1, 0, 0, 300), BackgroundTransparency = 1, BorderSizePixel = 0,
+	LayoutOrder = 1, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	ScrollBarThickness = 3, ScrollBarImageColor3 = T.Accent, ScrollingDirection = Enum.ScrollingDirection.Y,
+	ElasticBehavior = Enum.ElasticBehavior.Always,
 }, main)
-new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, content)
+local list = new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, content)
 new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12),
 	PaddingBottom = UDim.new(0, 12) }, content)
+
+-- Высота = контент, но не больше 65% экрана
+local function fitHeight()
+	local vp = workspace.CurrentCamera.ViewportSize.Y
+	local h = list.AbsoluteContentSize.Y + 12
+	content.Size = UDim2.new(1, 0, 0, math.min(h, math.floor(vp * 0.65) - 44))
+end
+bind(list:GetPropertyChangedSignal("AbsoluteContentSize"), fitHeight)
+bind(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), fitHeight)
 
 local order = 0
 local function nextOrder() order += 1; return order end
@@ -494,7 +506,7 @@ local function slider(title, cfgKey, min, max, step)
 		Size = UDim2.new(1, 0, 0, 20), Position = UDim2.new(0, 0, 0, 24) }, r)
 	hit.InputBegan:Connect(function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-			dragging = true; set(i.Position.X)
+			dragging = true; content.ScrollingEnabled = false; set(i.Position.X)
 		end
 	end)
 	bind(UIS.InputChanged, function(i)
@@ -504,7 +516,7 @@ local function slider(title, cfgKey, min, max, step)
 	end)
 	bind(UIS.InputEnded, function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-			dragging = false
+			dragging = false; content.ScrollingEnabled = true
 		end
 	end)
 end
@@ -541,6 +553,7 @@ new("TextLabel", {
 	Text = "RightShift — скрыть  ·  × — закрыть", Font = FONT, TextSize = 11, TextColor3 = T.Sub,
 	BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 14), LayoutOrder = nextOrder(),
 }, content)
+fitHeight()
 
 -- Закрыть скрипт полностью
 local function shutdown()
