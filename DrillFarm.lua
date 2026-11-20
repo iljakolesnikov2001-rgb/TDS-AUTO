@@ -6,7 +6,7 @@
 ----------------------------------------------------------------- CONFIG
 local CONFIG = {
 	-- Руда
-	OreNames        = { "Coal", "Iron", "Gold", "Diamond" }, -- подстроки имён руд
+	OreNames        = {},    -- типы руды (SessionOreType: "Coal", "Iron"...); пусто = любая
 	MaxTimePerOre   = 8,     -- сек; 0 = без лимита
 	OreSearchRadius = 150,   -- студов; 0 = без лимита
 	PickaxeName     = "Pickaxe",
@@ -208,29 +208,68 @@ local function equipPickaxe()
 	end
 end
 
+-- Жилы: Part с атрибутами SessionOreType / OreLoaded (Workspace.Chunks...Nodes.Ore_Node*)
+local function oreNodes()
+	local out, root = {}, workspace:FindFirstChild("Chunks") or workspace
+	for _, d in ipairs(root:GetDescendants()) do
+		local t = d:IsA("BasePart") and d:GetAttribute("SessionOreType")
+		if t and d:GetAttribute("OreLoaded") ~= false and d:FindFirstChild("Ore")
+			and (#CONFIG.OreNames == 0 or hasKey(t, CONFIG.OreNames)) then
+			table.insert(out, d)
+		end
+	end
+	return out
+end
+
+local function oreAlive(node)
+	return node.Parent and node:GetAttribute("OreLoaded") ~= false and node:FindFirstChild("Ore") ~= nil
+end
+
+local function swing(tool, target)
+	if tool then pcall(function() tool:Activate() end) end
+	local cam = workspace.CurrentCamera
+	local p = pos(target)
+	if cam and p then
+		local v, on = cam:WorldToViewportPoint(p)
+		if on then
+			VIM:SendMouseButtonEvent(v.X, v.Y, 0, true, game, 0)
+			task.wait(0.03)
+			VIM:SendMouseButtonEvent(v.X, v.Y, 0, false, game, 0)
+		end
+	end
+end
+
 local function farmStep()
 	if bagFull() then
-		local _, reg = nearestShop()
-		if reg then tp(reg) end
+		local drill = workspace:FindFirstChild(CONFIG.DrillName)
+		if drill then tp(drill, Vector3.new(0, 8, 0)) end
 		State.Farm = false
-		print("[Farm] Сумка полна — телепорт к магазину, фарм выключен")
+		print("[Farm] Сумка полна — ТП к дрели, фарм выключен")
 		return
 	end
-	local ores = findAll(function(d)
-		return (d:IsA("Model") or d:IsA("BasePart")) and hasKey(d.Name, CONFIG.OreNames)
-			and not isCharacter(d)
-	end)
-	local ore = nearest(ores, CONFIG.OreSearchRadius)
-	if not ore then return end
+	local node = nearest(oreNodes(), CONFIG.OreSearchRadius)
+	if not node then return end
+	local ore = node:FindFirstChild("Ore") or node
+	if not moveTo(ore, function() return State.Farm end) then return end
 	local tool = equipPickaxe()
 	local start = os.clock()
-	while State.Farm and ore.Parent do
+	while State.Farm and oreAlive(node) do
 		if CONFIG.MaxTimePerOre > 0 and os.clock() - start > CONFIG.MaxTimePerOre then break end
-		tp(ore, Vector3.new(0, 0, 3))
-		if tool then tool:Activate() end
-		firePrompt(ore)
-		task.wait(0.15)
+		local r, p = hrp(), pos(ore)
+		if r and p then
+			-- стоим рядом и смотрим на руду
+			local dir = r.Position - p
+			dir = Vector3.new(dir.X, 0, dir.Z)
+			if dir.Magnitude < 0.1 then dir = Vector3.new(0, 0, 1) end
+			local stand = p + dir.Unit * 4
+			r.CFrame = CFrame.lookAt(Vector3.new(stand.X, p.Y, stand.Z), p)
+			local cam = workspace.CurrentCamera
+			if cam then cam.CFrame = CFrame.lookAt(cam.CFrame.Position, p) end
+		end
+		swing(tool, ore)
+		task.wait(0.25)
 	end
+	task.wait(0.3)
 end
 
 local function knit(service, name)
