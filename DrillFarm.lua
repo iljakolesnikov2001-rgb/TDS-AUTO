@@ -331,10 +331,12 @@ local function scan()
 	for _, d in ipairs(RS:GetDescendants()) do
 		if d:IsA("RemoteEvent") or d:IsA("RemoteFunction") then log("[Remote]", d:GetFullName()) end
 	end
+	print("[Scan] Готово, строк: " .. #out)
+	return table.concat(out, "\n")
+end
+local function copyText(text)
 	local clip = setclipboard or toclipboard or (syn and syn.write_clipboard) or (Clipboard and Clipboard.set)
-	local ok = clip and pcall(clip, table.concat(out, "\n"))
-	print(ok and "[Scan] Готово, скопировано в буфер" or "[Scan] Готово (буфер недоступен, смотри F9)")
-	return ok
+	return clip and pcall(clip, text) or false
 end
 
 ----------------------------------------------------------------- LOOPS
@@ -608,11 +610,26 @@ slider("Радиус поиска руды", "OreSearchRadius", 0, 500, 10)
 slider("Время на руду, сек", "MaxTimePerOre", 0, 30, 1)
 slider("Топливо, %", "FuelTargetPct", 10, 100, 5)
 slider("Макс. цена трупа", "CorpseMaxValue", 0, 2000, 50)
-action("Scan  ·  копировать", function(b)
+local lastScan
+local copyBtn
+action("Scan", function(b)
 	b.Text = "Сканирую..."
-	local ok = scan()
+	lastScan = scan()
+	b.Text = "Scan  ✓"
+	copyBtn.BackgroundColor3 = T.Accent
+	copyBtn.TextColor3 = T.Text
+	copyBtn.Text = "Копировать скан"
+	task.delay(2, function() if b.Parent then b.Text = "Scan" end end)
+end)
+copyBtn = action("Копировать скан", function(b)
+	if not lastScan then return end
+	local ok = copyText(lastScan)
 	b.Text = ok and "Скопировано ✓" or "Нет буфера · F9"
-	task.delay(2, function() if b.Parent then b.Text = "Scan  ·  копировать" end end)
+	task.delay(2, function() if b.Parent then b.Text = "Копировать скан" end end)
+end)
+copyBtn.BackgroundColor3 = T.Off
+copyBtn.TextColor3 = T.Sub
+copyBtn.Text = "Копировать · сначала Scan"
 end)
 new("TextLabel", {
 	Text = "RightShift — скрыть  ·  × — закрыть", Font = FONT, TextSize = 11, TextColor3 = T.Sub,
