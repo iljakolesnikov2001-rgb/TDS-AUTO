@@ -250,12 +250,31 @@ end
 
 local pickupOresNear -- определяется ниже (после collect)
 
-local function farmStep()
-	if bagFull() then
+-- Точка продажи: ...TradingPost.SellParts.SellPart
+local function nearestSellPart()
+	local list = findAll(function(d)
+		return d:IsA("BasePart") and d.Name == "SellPart" and d:FindFirstAncestor("TradingPost") ~= nil
+	end)
+	return nearest(list)
+end
+
+-- Сумка полна: к точке продажи (если есть), иначе к дрели
+local function onBagFull(who)
+	local sell = nearestSellPart()
+	if sell then
+		tp(sell)
+		print("[" .. who .. "] Сумка полна — ТП к точке продажи")
+	else
 		local drill = workspace:FindFirstChild(CONFIG.DrillName)
 		if drill then tp(drill, Vector3.new(0, 8, 0)) end
+		print("[" .. who .. "] Сумка полна — ТП к дрели")
+	end
+end
+
+local function farmStep()
+	if bagFull() then
 		State.Farm = false
-		print("[Farm] Сумка полна — ТП к дрели, фарм выключен")
+		onBagFull("Farm")
 		return
 	end
 	local node = nearest(oreNodes(), CONFIG.OreSearchRadius)
@@ -361,7 +380,7 @@ local function collectItems()
 		if not State.Collect then return end
 		if bagFull() then
 			State.Collect = false
-			print("[Collect] Сумка полна — сбор выключен")
+			onBagFull("Collect")
 			return
 		end
 		local v = it:GetAttribute("Value") or 0
@@ -881,6 +900,17 @@ slider("Время на руду, сек", "MaxTimePerOre", 0, 30, 1)
 slider("Топливо, %", "FuelTargetPct", 10, 100, 5)
 slider("Макс. цена трупа", "CorpseMaxValue", 0, 2000, 50)
 local lastScan
+local function dumpValue(v, indent, out, depth)
+	if type(v) ~= "table" or depth > 4 then table.insert(out, indent .. tostring(v)); return end
+	for k, x in pairs(v) do
+		if type(x) == "table" then
+			table.insert(out, indent .. tostring(k) .. ":")
+			dumpValue(x, indent .. "  ", out, depth + 1)
+		else
+			table.insert(out, indent .. tostring(k) .. " = " .. tostring(x))
+		end
+	end
+end
 local copyBtn
 local function scanBtn(title, nearOnly)
 	action(title, function(b)
@@ -895,6 +925,23 @@ local function scanBtn(title, nearOnly)
 end
 scanBtn("Scan", false)
 scanBtn("Scan рядом (25 st)", true)
+action("Инвентарь → F9", function(b)
+	local rf = knit("CarryInventoryService", "GetInventory")
+	local out = { "[Inventory]" }
+	if rf then
+		local ok, res = pcall(function() return rf:InvokeServer() end)
+		dumpValue(ok and res or ("ошибка: " .. tostring(res)), "  ", out, 0)
+	else
+		table.insert(out, "  GetInventory не найден")
+	end
+	lastScan = table.concat(out, "\n")
+	print(lastScan)
+	copyBtn.BackgroundColor3 = T.Accent
+	copyBtn.TextColor3 = T.Text
+	copyBtn.Text = "Копировать скан"
+	b.Text = "Готово ✓"
+	task.delay(1.5, function() if b.Parent then b.Text = "Инвентарь → F9" end end)
+end)
 copyBtn = action("Копировать скан", function(b)
 	if not lastScan then return end
 	local ok = copyText(lastScan)
