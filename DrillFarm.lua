@@ -55,6 +55,8 @@ local RS       = game:GetService("ReplicatedStorage")
 local VIM      = game:GetService("VirtualInputManager")
 local player   = Players.LocalPlayer
 
+local Running = true
+local Connections = {}
 local State = { Farm=false, Collect=false, Ammo=false, AutoBuy=false,
                 Fuel=false, Gate=false, Burn=false, Highlight=false }
 
@@ -333,14 +335,14 @@ local loops = {
 }
 for name, fn in pairs(loops) do
 	task.spawn(function()
-		while true do
+		while Running do
 			if State[name] then pcall(fn) end
 			task.wait(CONFIG.Tick)
 		end
 	end)
 end
 task.spawn(function()
-	while true do pcall(highlightStep); task.wait(1) end
+	while Running do pcall(highlightStep); task.wait(1) end
 end)
 
 ----------------------------------------------------------------- UI
@@ -367,10 +369,13 @@ local function new(class, props, parent)
 	o.Parent = parent
 	return o
 end
+local function bind(sig, fn) local c = sig:Connect(fn); table.insert(Connections, c); return c end
 local function corner(o, r) new("UICorner", { CornerRadius = UDim.new(0, r) }, o) end
 local function stroke(o) new("UIStroke", { Color = T.Stroke, Thickness = 1 }, o) end
 
 local pg = player:WaitForChild("PlayerGui")
+local env = (getgenv and getgenv()) or _G
+if env.DrillFarmClose then pcall(env.DrillFarmClose) end
 local old = pg:FindFirstChild("DrillFarm")
 if old then old:Destroy() end
 
@@ -389,18 +394,23 @@ local header = new("Frame", { Size = UDim2.new(1, 0, 0, 44), BackgroundTranspare
 new("TextLabel", {
 	Text = "DrillFarm", Font = FONT_B, TextSize = 16, TextColor3 = T.Text,
 	BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left,
-	Position = UDim2.new(0, 16, 0, 6), Size = UDim2.new(1, -60, 0, 18),
+	Position = UDim2.new(0, 16, 0, 6), Size = UDim2.new(1, -90, 0, 18),
 }, header)
 new("TextLabel", {
 	Text = "Drill to Earth's Core", Font = FONT, TextSize = 11, TextColor3 = T.Sub,
 	BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left,
-	Position = UDim2.new(0, 16, 0, 24), Size = UDim2.new(1, -60, 0, 14),
+	Position = UDim2.new(0, 16, 0, 24), Size = UDim2.new(1, -90, 0, 14),
 }, header)
 local minBtn = new("TextButton", {
 	Text = "–", Font = FONT_B, TextSize = 18, TextColor3 = T.Sub, AutoButtonColor = false,
-	BackgroundColor3 = T.Card, Size = UDim2.new(0, 28, 0, 28), Position = UDim2.new(1, -40, 0, 8),
+	BackgroundColor3 = T.Card, Size = UDim2.new(0, 28, 0, 28), Position = UDim2.new(1, -72, 0, 8),
 }, header)
 corner(minBtn, 8)
+local closeBtn = new("TextButton", {
+	Text = "×", Font = FONT_B, TextSize = 18, TextColor3 = T.Sub, AutoButtonColor = false,
+	BackgroundColor3 = T.Card, Size = UDim2.new(0, 28, 0, 28), Position = UDim2.new(1, -40, 0, 8),
+}, header)
+corner(closeBtn, 8)
 
 -- Контент
 local content = new("Frame", {
@@ -487,12 +497,12 @@ local function slider(title, cfgKey, min, max, step)
 			dragging = true; set(i.Position.X)
 		end
 	end)
-	UIS.InputChanged:Connect(function(i)
+	bind(UIS.InputChanged, function(i)
 		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
 			set(i.Position.X)
 		end
 	end)
-	UIS.InputEnded:Connect(function(i)
+	bind(UIS.InputEnded, function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
 			dragging = false
 		end
@@ -528,9 +538,26 @@ slider("Топливо, %", "FuelTargetPct", 10, 100, 5)
 slider("Макс. цена трупа", "CorpseMaxValue", 0, 2000, 50)
 action("Scan  ·  F9", scan)
 new("TextLabel", {
-	Text = "RightShift — скрыть меню", Font = FONT, TextSize = 11, TextColor3 = T.Sub,
+	Text = "RightShift — скрыть  ·  × — закрыть", Font = FONT, TextSize = 11, TextColor3 = T.Sub,
 	BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 14), LayoutOrder = nextOrder(),
 }, content)
+
+-- Закрыть скрипт полностью
+local function shutdown()
+	Running = false
+	for k in pairs(State) do State[k] = false end
+	for _, c in ipairs(Connections) do c:Disconnect() end
+	for _, d in ipairs(workspace:GetDescendants()) do
+		if d.Name == "_DF_HL" and d:IsA("Highlight") then d:Destroy() end
+	end
+	gui:Destroy()
+	print("[DrillFarm] Скрипт закрыт")
+end
+closeBtn.MouseEnter:Connect(function() tween(closeBtn, { TextColor3 = Color3.fromRGB(255, 90, 90) }) end)
+closeBtn.MouseLeave:Connect(function() tween(closeBtn, { TextColor3 = T.Sub }) end)
+closeBtn.MouseButton1Click:Connect(shutdown)
+getgenv = getgenv or function() return _G end
+getgenv().DrillFarmClose = shutdown
 
 -- Свернуть / скрыть
 local collapsed = false
@@ -539,7 +566,7 @@ minBtn.MouseButton1Click:Connect(function()
 	content.Visible = not collapsed
 	minBtn.Text = collapsed and "+" or "–"
 end)
-UIS.InputBegan:Connect(function(i, gp)
+bind(UIS.InputBegan, function(i, gp)
 	if not gp and i.KeyCode == Enum.KeyCode.RightShift then main.Visible = not main.Visible end
 end)
 
@@ -551,13 +578,13 @@ do
 			dragging, startPos, startInput = true, main.Position, i.Position
 		end
 	end)
-	UIS.InputChanged:Connect(function(i)
+	bind(UIS.InputChanged, function(i)
 		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
 			local d = i.Position - startInput
 			main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
 		end
 	end)
-	UIS.InputEnded:Connect(function(i)
+	bind(UIS.InputEnded, function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
 			dragging = false
 		end
