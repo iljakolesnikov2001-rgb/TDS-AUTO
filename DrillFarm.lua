@@ -47,6 +47,8 @@ local CONFIG = {
 	MonsterFilter   = {},              -- пусто = все монстры
 	HighlightColor  = Color3.fromRGB(255, 60, 60),
 
+	MoveSpeed       = 45,              -- студов/сек при перелёте к предмету (меньше = безопаснее)
+	PickupDelay     = 0.6,             -- пауза после подбора, сек
 	Tick            = 0.25,
 }
 
@@ -91,6 +93,23 @@ end
 local function tp(obj, offset)
 	local r, p = hrp(), pos(obj)
 	if r and p then r.CFrame = CFrame.new(p + (offset or Vector3.new(0, 3, 0))) end
+end
+
+-- Плавный перелёт (вместо мгновенного ТП); возвращает false, если прервали
+local function moveTo(obj, stillOk)
+	local r, p = hrp(), pos(obj)
+	if not (r and p) then return false end
+	local target = p + Vector3.new(0, 3, 0)
+	while true do
+		r = hrp()
+		if not r or not obj.Parent or (stillOk and not stillOk()) then return false end
+		local d = target - r.Position
+		if d.Magnitude < 3 then return true end
+		local step = math.min(d.Magnitude, CONFIG.MoveSpeed * 0.05)
+		r.AssemblyLinearVelocity = Vector3.zero
+		r.CFrame = CFrame.new(r.Position + d.Unit * step)
+		task.wait(0.05)
+	end
 end
 
 local function attr(name)
@@ -223,19 +242,50 @@ local function knit(service, name)
 end
 
 -- Предметы лежат в Workspace.Items (атрибуты Value, Category, DisplayName)
-local function collectItems()
+-- Предметы на земле: Workspace.Items + лут (атрибут SessionSnapshotItemId), не на персонажах
+local skipUntil = setmetatable({}, { __mode = "k" })
+local function groundItems()
+	local out, seen = {}, {}
 	local folder = workspace:FindFirstChild("Items")
+	if folder then
+		for _, it in ipairs(folder:GetChildren()) do seen[it] = true; table.insert(out, it) end
+	end
+	for _, d in ipairs(workspace:GetDescendants()) do
+		if not seen[d] and (d:IsA("Model") or d:IsA("BasePart")) and d:GetAttribute("SessionSnapshotItemId")
+			and d:GetAttribute("ItemDatabaseId") then
+			local m = d:FindFirstAncestorOfClass("Model")
+			if not (m and isCharacter(m)) and not (d.Parent and seen[d.Parent]) then
+				seen[d] = true; table.insert(out, d)
+			end
+		end
+	end
+	return out
+end
+
+local function collectItems()
 	local pickup = knit("CarryInventoryService", "Pickup")
-	if not folder or not pickup then return end
-	for _, it in ipairs(folder:GetChildren()) do
-		if not State.Collect or bagFull() then return end
+	if not pickup then return end
+	local items = groundItems()
+	table.sort(items, function(a, b) return dist(a) < dist(b) end)
+	for _, it in ipairs(items) do
+		if not State.Collect then return end
+		if bagFull() then
+			State.Collect = false
+			print("[Collect] Сумка полна — сбор выключен")
+			return
+		end
 		local v = it:GetAttribute("Value") or 0
 		local name = it:GetAttribute("DisplayName") or it.Name
-		if v >= CONFIG.ItemsMinValue and not hasKey(name, CONFIG.IgnoredItems) then
-			tp(it)
-			task.wait(0.15)
-			pcall(function() pickup:InvokeServer(it) end)
-			task.wait(0.1)
+		if v >= CONFIG.ItemsMinValue and not hasKey(name, CONFIG.IgnoredItems)
+			and (skipUntil[it] or 0) < os.clock() then
+			if moveTo(it, function() return State.Collect end) then
+				task.wait(0.2)
+				local before = attr(CONFIG.BagCountAttr)
+				pcall(function() pickup:InvokeServer(it) end)
+				task.wait(CONFIG.PickupDelay)
+				-- не поднялся (не влез/нельзя) — не возвращаемся к нему 60 сек
+				if it.Parent and attr(CONFIG.BagCountAttr) == before then skipUntil[it] = os.clock() + 60 end
+			end
 		end
 	end
 end
@@ -569,12 +619,24 @@ local function toggle(key, title)
 	local hit = new("TextButton", { Text = "", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0) }, r)
 	hit.MouseEnter:Connect(function() tween(r, { BackgroundColor3 = T.Hover }) end)
 	hit.MouseLeave:Connect(function() tween(r, { BackgroundColor3 = T.Card }) end)
+	local shown = false
+	local function render()
+		local on = State[key]
+		shown = on
+		tween(track, { BackgroundColor3 = on and T.Accent or T.Off })
+		tween(knob, { Position = on and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7) })
+	end
 	hit.MouseButton1Click:Connect(function()
 		if scrollMoved then return end
 		State[key] = not State[key]
-		local on = State[key]
-		tween(track, { BackgroundColor3 = on and T.Accent or T.Off })
-		tween(knob, { Position = on and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7) })
+		render()
+	end)
+	-- если скрипт сам выключил функцию (сумка полна и т.п.) — обновить переключатель
+	task.spawn(function()
+		while Running do
+			if State[key] ~= shown then render() end
+			task.wait(0.3)
+		end
 	end)
 end
 
