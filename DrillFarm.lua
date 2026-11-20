@@ -450,6 +450,7 @@ local function groundItems()
 	return out
 end
 
+local grabSack -- ниже
 local function collectItems()
 	local pickup = knit("CarryInventoryService", "Pickup")
 	if not pickup then return end
@@ -464,7 +465,9 @@ local function collectItems()
 		end
 		local v = it:GetAttribute("Value") or 0
 		local name = it:GetAttribute("DisplayName") or it.Name
-		if v >= CONFIG.ItemsMinValue and not hasKey(name, CONFIG.IgnoredItems)
+		if it:GetAttribute("ItemDatabaseId") == "Money_Sack" then
+			if (skipUntil[it] or 0) < os.clock() and not grabSack(it) then skipUntil[it] = os.clock() + 30 end
+		elseif v >= CONFIG.ItemsMinValue and not hasKey(name, CONFIG.IgnoredItems)
 			and (skipUntil[it] or 0) < os.clock() then
 			if moveTo(it, function() return State.Collect end) then
 				task.wait(0.2)
@@ -550,6 +553,30 @@ local function tryDrop(e)
 	return false
 end
 
+local function isMySack(it)
+	return it:GetAttribute("ItemDatabaseId") == "Money_Sack"
+		and (it:GetAttribute("BagCreator") == nil or it:GetAttribute("BagCreator") == player.Name)
+end
+
+-- Мешок с деньгами: пробуем Pickup, касание и промпт, пока не исчезнет
+grabSack = function(it)
+	local pickup = knit("CarryInventoryService", "Pickup")
+	for _ = 1, 4 do
+		if not it.Parent then return true end
+		moveTo(it)
+		if pickup then pcall(function() pickup:InvokeServer(it) end) end
+		task.wait(0.3)
+		if not it.Parent then break end
+		for _, part in ipairs(it:GetDescendants()) do
+			if part:IsA("BasePart") then touch(part) end
+		end
+		firePrompt(it)
+		task.wait(0.4)
+	end
+	if not it.Parent then status("[Sell] подобрал мешок с деньгами"); return true end
+	return false
+end
+
 sellAll = function(sellPart)
 	local folder = workspace:FindFirstChild("Items")
 	local pickup = knit("CarryInventoryService", "Pickup")
@@ -592,24 +619,17 @@ sellAll = function(sellPart)
 		status("[Sell] нечего продавать (или не удалось выкинуть — нужен лог SimpleSpy)")
 		return
 	end
-	-- ждём мешочек с золотом и подбираем всё новое рядом, что выкинули не мы
-	local before = {}
-	for _, it in ipairs(folder:GetChildren()) do before[it] = true end
-	local t0 = os.clock()
-	while os.clock() - t0 < 6 do
+	-- ждём свой мешок с деньгами (Money_Sack, BagCreator = мы) и подбираем
+	local t0, got = os.clock(), 0
+	while os.clock() - t0 < 12 do
+		local any = false
 		for _, it in ipairs(folder:GetChildren()) do
-			if not mine[it] and dist(it) < 30 and (not before[it] or not it:GetAttribute("Cost")) then
-				local n = string.lower(it.Name .. " " .. tostring(it:GetAttribute("DisplayName") or ""))
-				if n:find("gold") or n:find("coin") or n:find("bag") or n:find("money") or n:find("cash") then
-					moveTo(it)
-					pcall(function() pickup:InvokeServer(it) end)
-					status("[Sell] подобрал: " .. it.Name)
-					mine[it] = true
-				end
-			end
+			if isMySack(it) then any = true; if grabSack(it) then got += 1 end end
 		end
+		if got > 0 and not any then break end
 		task.wait(0.4)
 	end
+	status(got > 0 and ("[Sell] готово, мешков подобрано: " .. got) or "[Sell] мешок с деньгами не найден/не поднялся")
 end
 
 -- Только предметы из Workspace.Items; сундуки/двери/NPC не трогаем
