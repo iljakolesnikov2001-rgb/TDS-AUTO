@@ -630,7 +630,6 @@ end)
 copyBtn.BackgroundColor3 = T.Off
 copyBtn.TextColor3 = T.Sub
 copyBtn.Text = "Копировать · сначала Scan"
-end)
 new("TextLabel", {
 	Text = "RightShift — скрыть  ·  × — закрыть", Font = FONT, TextSize = 11, TextColor3 = T.Sub,
 	BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 14), LayoutOrder = nextOrder(),
