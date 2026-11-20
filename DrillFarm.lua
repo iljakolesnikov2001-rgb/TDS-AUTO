@@ -48,8 +48,9 @@ local CONFIG = {
 
 	-- Убийство монстров из-под земли (киркой: хитбокс удара считается от персонажа, пол не мешает)
 	KillRadius      = 80,              -- Kill Aura: монстры в этом радиусе
+	GateRadius      = 1500,            -- как далеко искать ворота подземелья (летим к ним)
 	DungeonRadius   = 400,             -- Авто-данж: ищем монстров и сундуки в этом радиусе
-	KillDepth       = 2,               -- (авто-подбор: если урона нет — поднимается) на сколько студов ниже подошвы монстра стоим (0 = вплотную)
+	KillDepth       = 1,               -- на сколько студов ниже обычной стойки (ноги в полу). Проверено: 1 работает, 2+ сервер не засчитывает; 0 = на полу
 	KillTimeout     = 30,              -- сек на одного монстра
 
 	-- Подсветка
@@ -1027,6 +1028,8 @@ end
 -- Пропускаем запертые (Locked=true у узла) и уже открытые.
 local chestTried = setmetatable({}, { __mode = "k" })
 local function chestInfo(prompt)
+	local npc = workspace:FindFirstChild("Npc")
+	if npc and prompt:IsDescendantOf(npc) then return nil end -- мимик — монстр, не сундук
 	local node = prompt
 	local isChest = false
 	for _ = 1, 6 do
@@ -1094,8 +1097,7 @@ local function highlightStep()
 end
 
 ----------------------------------------------------------------- KILL AURA / DUNGEON
--- Бьём монстров киркой из-под земли: сервер берёт цели по расстоянию от персонажа
--- (MeleeSwingBounds), потолка нет — достаточно стоять под подошвой монстра, ниже пола.
+-- Бьём монстров мечом, стоя ногами в полу сбоку от монстра и глядя на него. Глубже 1 st сервер удар не засчитывает.
 local RunService = game:GetService("RunService")
 local killDepth = CONFIG.KillDepth
 local killSkip = setmetatable({}, { __mode = "k" })
@@ -1121,25 +1123,28 @@ end
 local function standUnder(m)
 	local ok, cf, size = pcall(m.GetBoundingBox, m)
 	local p = ok and Vector3.new(cf.Position.X, cf.Position.Y - size.Y / 2, cf.Position.Z) or pos(m)
-	return p and p - Vector3.new(0, killDepth, 0), p
+	local mid = ok and cf.Position or p
+	-- сбоку (2.5 st) и ниже подошвы: меч бьёт в конус перед персонажем, поэтому смотрим на монстра
+	-- корень персонажа в обычной стойке на 3 st выше подошвы; сервер засчитывает удар, пока он не ниже +2 st
+	return p and p + Vector3.new(2.5, 3 - killDepth, 0), p, mid
 end
 
 local function killOne(m)
 	local h = m:FindFirstChild("Humanoid")
 	local tool = equipWeapon()
 	if not (h and tool) then killSkip[m] = os.clock() + 30; return end
-	local stand, base = standUnder(m)
+	local stand, base, mid = standUnder(m)
 	if not stand then return end
 	if not moveTo(m, function() return State.KillAura or State.Dungeon end, stand) then return end
 	Moving = true -- ноклип на время удара
 	local t0, lastHp, lastHit = os.clock(), h.Health, os.clock()
 	while Running and (State.KillAura or State.Dungeon) and m.Parent and h.Health > 0 do
 		local r = hrp()
-		stand, base = standUnder(m)
+		stand, base, mid = standUnder(m)
 		if not (r and stand) then break end
 		lastSurface = base
 		r.AssemblyLinearVelocity = Vector3.zero
-		r.CFrame = CFrame.new(stand)
+		r.CFrame = CFrame.lookAt(stand, mid)
 		swing(tool)
 		if h.Health < lastHp - 0.01 then lastHp, lastHit = h.Health, os.clock() end
 		if os.clock() - lastHit > 1.5 then -- урона нет: поднимаемся ближе к монстру
@@ -1184,23 +1189,39 @@ end
 
 -- Вход в подземелье: летим к воротам DungeonGate_* и жмём их промпт.
 -- Вызывается ПЕРЕД зачисткой: пока рядом (в DungeonRadius) есть ворота, мы ещё снаружи — входим.
-local gateNext = 0
+local gateNext, gateSkip = 0, setmetatable({}, { __mode = "k" })
 local function enterGate()
 	if os.clock() < gateNext or bagFull() then return false end
 	gateNext = os.clock() + 8
 	local best, bd
 	for _, g in ipairs(workspace:GetChildren()) do
-		if g:IsA("Model") and string.sub(g.Name, 1, #CONFIG.GateName) == CONFIG.GateName then
+		if g:IsA("Model") and string.sub(g.Name, 1, #CONFIG.GateName) == CONFIG.GateName and not g.Name:find("Tutorial") and (gateSkip[g] or 0) < os.clock() then
 			local d = dist(g)
-			if d <= CONFIG.DungeonRadius and (not bd or d < bd) then best, bd = g, d end
+			if d <= CONFIG.GateRadius and (not bd or d < bd) then best, bd = g, d end
 		end
 	end
 	if not best then return false end
+	local gp = pos(best)
 	if bd > 12 and not moveTo(best, function() return State.Dungeon end) then return true end
-	task.wait(0.3)
+	pcall(function() player:RequestStreamAroundAsync(gp, 5) end)
+	-- ворота далеко не прогружены: ждём, пока появится промпт входа
+	local pr
+	for _ = 1, 20 do
+		for _, d in ipairs(best:GetDescendants()) do
+			if d:IsA("ProximityPrompt") then pr = d; break end
+		end
+		if pr then break end
+		task.wait(0.25)
+	end
+	if not pr then
+		gateSkip[best] = os.clock() + 120
+		status("[Dungeon] у ворот нет промпта: " .. best.Name)
+		return true
+	end
 	status("[Dungeon] вход: " .. best.Name)
-	firePrompt(best)
+	usePrompt(pr)
 	task.wait(3)
+	gateSkip[best] = os.clock() + 60 -- не входим в те же ворота сразу снова
 	return true
 end
 
@@ -1602,7 +1623,7 @@ section("Настройки")
 slider("Радиус поиска руды", "OreSearchRadius", 0, 500, 10)
 slider("Радиус Kill Aura", "KillRadius", 10, 300, 10)
 slider("Радиус данжа", "DungeonRadius", 50, 1000, 50)
-slider("Глубина под монстром", "KillDepth", 0, 10, 1)
+slider("Глубина (ноги в полу)", "KillDepth", 0, 3, 1)
 slider("Время на руду, сек", "MaxTimePerOre", 0, 30, 1)
 slider("Топливо, %", "FuelTargetPct", 10, 100, 5)
 slider("Макс. цена трупа", "CorpseMaxValue", 0, 2000, 50)
