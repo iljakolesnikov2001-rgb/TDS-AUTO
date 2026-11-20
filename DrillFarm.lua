@@ -215,9 +215,70 @@ local function isCharacter(m)
 end
 
 ----------------------------------------------------------------- BAG / SHOP
+local knitCache = {}
+local function knit(service, name)
+	local key = service .. "." .. name
+	local c = knitCache[key]
+	if c and c.Parent then return c end
+	local idx = RS:FindFirstChild("Packages") and RS.Packages:FindFirstChild("_Index")
+	if not idx then return end
+	for _, d in ipairs(idx:GetDescendants()) do
+		if d.Name == name and d.Parent and d.Parent.Parent and d.Parent.Parent.Name == service then
+			knitCache[key] = d
+			return d
+		end
+	end
+end
+
+-- Заполненность сумки: берём из GetInventory (Usage/Capacity) — атрибут CarryCapacity врёт
+local invCache, invAt = nil, 0
+local function inventory(force)
+	if not force and invCache and os.clock() - invAt < 1 then return invCache end
+	local rf = knit("CarryInventoryService", "GetInventory")
+	if rf then
+		local ok, inv = pcall(function() return rf:InvokeServer() end)
+		if ok and type(inv) == "table" then invCache, invAt = inv, os.clock() end
+	end
+	return invCache
+end
+local function bagUsage(force)
+	local inv = inventory(force)
+	if inv and inv.Usage then return inv.Usage, inv.Capacity end
+	return attr(CONFIG.BagCountAttr), attr(CONFIG.BagCapacityAttr)
+end
 local function bagFull()
-	local n, cap = attr(CONFIG.BagCountAttr), attr(CONFIG.BagCapacityAttr)
+	local n, cap = bagUsage()
 	return n and cap and n >= cap
+end
+
+-- Подбор предмета: перебираем варианты аргументов Pickup, запоминаем рабочий
+local pickupWay
+local function pickupItem(it)
+	local rf = knit("CarryInventoryService", "Pickup")
+	if not rf then return false end
+	local id = it:GetAttribute("SessionSnapshotItemId")
+	local part = it:IsA("BasePart") and it or it:FindFirstChildWhichIsA("BasePart", true)
+	local ways = {
+		function() return rf:InvokeServer(it) end,
+		function() return rf:InvokeServer(id) end,
+		function() return rf:InvokeServer({ it }) end,
+		function() return rf:InvokeServer(part) end,
+	}
+	local function done()
+		return not it.Parent or not it:IsDescendantOf(workspace) or (it:FindFirstAncestorOfClass("Model") and isCharacter(it:FindFirstAncestorOfClass("Model")))
+	end
+	local order = pickupWay and { pickupWay } or {}
+	for i = 1, #ways do if i ~= pickupWay then table.insert(order, i) end end
+	local before = bagUsage(true)
+	for _, i in ipairs(order) do
+		pcall(ways[i])
+		task.wait(0.35)
+		if done() or bagUsage(true) ~= before then
+			if pickupWay ~= i then pickupWay = i; print("[Pickup] рабочий способ #" .. i) end
+			return true
+		end
+	end
+	return false
 end
 
 local function nearestShop()
@@ -421,13 +482,6 @@ local function farmStep()
 	if State.Farm and not oreAlive(node) and pickupOresNear then pickupOresNear(p, 25) end
 end
 
-local function knit(service, name)
-	local idx = RS:FindFirstChild("Packages") and RS.Packages:FindFirstChild("_Index")
-	if not idx then return end
-	for _, d in ipairs(idx:GetDescendants()) do
-		if d.Name == name and d.Parent and d.Parent.Parent and d.Parent.Parent.Name == service then return d end
-	end
-end
 
 -- Предметы лежат в Workspace.Items (атрибуты Value, Category, DisplayName)
 -- Предметы на земле: Workspace.Items + лут (атрибут SessionSnapshotItemId), не на персонажах
@@ -474,12 +528,15 @@ local function collectItems()
 		elseif v >= CONFIG.ItemsMinValue and not hasKey(name, CONFIG.IgnoredItems)
 			and (skipUntil[it] or 0) < os.clock() then
 			if moveTo(it, function() return State.Collect end) then
-				task.wait(0.2)
-				local before = attr(CONFIG.BagCountAttr)
-				pcall(function() pickup:InvokeServer(it) end)
-				task.wait(CONFIG.PickupDelay)
-				-- не поднялся (не влез/нельзя) — не возвращаемся к нему 60 сек
-				if it.Parent and attr(CONFIG.BagCountAttr) == before then skipUntil[it] = os.clock() + 60 end
+				task.wait(0.15)
+				if pickupItem(it) then
+					status("[Collect] подобрал: " .. name)
+					task.wait(CONFIG.PickupDelay)
+				else
+					-- не поднялся (не влез/нельзя) — не возвращаемся к нему 60 сек
+					skipUntil[it] = os.clock() + 60
+					status("[Collect] не поднялся: " .. name)
+				end
 			end
 		end
 	end
@@ -501,10 +558,7 @@ pickupOresNear = function(center, radius)
 				found = true
 				if moveTo(it, function() return State.Farm end) then
 					task.wait(0.15)
-					local before = attr(CONFIG.BagCountAttr)
-					pcall(function() pickup:InvokeServer(it) end)
-					task.wait(CONFIG.PickupDelay)
-					if it.Parent and attr(CONFIG.BagCountAttr) == before then skipUntil[it] = os.clock() + 60 end
+					if pickupItem(it) then task.wait(CONFIG.PickupDelay) else skipUntil[it] = os.clock() + 60 end
 				end
 			end
 		end
@@ -535,7 +589,7 @@ local function sellable(e)
 end
 
 local function tryDrop(e)
-	local usage = attr(CONFIG.BagCountAttr)
+	local usage = bagUsage(true)
 	local remotes = {
 		knit("CarryInventoryService", "DropGroup"),
 		knit("ToolService", "DropSpecificItem"),
@@ -547,7 +601,7 @@ local function tryDrop(e)
 		for _, args in ipairs(variants) do
 			local ok, res = pcall(function() return rf:InvokeServer(table.unpack(args)) end)
 			task.wait(0.4)
-			if attr(CONFIG.BagCountAttr) ~= usage then
+			if bagUsage(true) ~= usage then
 				status("[Sell] выброс сработал: " .. rf.Name .. "(" .. tostring(args[1]) .. ")")
 				return true
 			end
@@ -652,6 +706,7 @@ grabSack = function(it)
 		end },
 	}
 	moveTo(it)
+	if pickupItem(it) then status("[Sell] мешок подобран"); return true end
 	for _, t in ipairs(tries) do
 		if not it.Parent then break end
 		local r = hrp()
@@ -691,7 +746,7 @@ sellAll = function(sellPart)
 					-- страховка: выпало не то (легендарка/топливо) — поднять обратно
 					local rar, cat = it:GetAttribute("Rarity") or "", it:GetAttribute("Category") or ""
 					if hasKey(rar, CONFIG.SellKeepRarity) or hasKey(cat, CONFIG.SellKeepCategory) then
-						pcall(function() pickup:InvokeServer(it) end)
+						pickupItem(it)
 						status("[Sell] выпало не то, вернул: " .. it.Name)
 					else
 						mine[it] = true
@@ -730,8 +785,7 @@ local function collectStep(onlyAmmo)
 	for _, it in ipairs(folder:GetChildren()) do
 		local name = (it:GetAttribute("DisplayName") or it.Name)
 		if it:GetAttribute("SessionSnapshotItemId") and hasKey(name, CONFIG.AmmoNames) and dist(it) <= CONFIG.AmmoRadius then
-			local pickup = knit("CarryInventoryService", "Pickup")
-			if pickup then pcall(function() pickup:InvokeServer(it) end) end
+			pickupItem(it)
 		end
 	end
 end
@@ -808,7 +862,10 @@ local function chestInfo(prompt)
 	end
 	return isChest
 end
+local chestNextScan = 0
 local function chestStep()
+	if os.clock() < chestNextScan then return end
+	chestNextScan = os.clock() + 2
 	local list = {}
 	for _, d in ipairs(workspace:GetDescendants()) do
 		if d:IsA("ProximityPrompt") and d.Enabled and (chestTried[d] or 0) < os.clock()
