@@ -305,26 +305,36 @@ local function highlightStep()
 end
 
 ----------------------------------------------------------------- SCANNER
+-- Скан: печать в F9 + копирование в буфер обмена
 local function scan()
-	local seen = {}
+	local out, seen = {}, {}
+	local function log(...)
+		local t = {}
+		for _, v in ipairs({ ... }) do table.insert(t, tostring(v)) end
+		local line = table.concat(t, " ")
+		print(line); table.insert(out, line)
+	end
 	for _, d in ipairs(workspace:GetDescendants()) do
 		if d:IsA("ProximityPrompt") then
 			local key = d.Parent.Name .. " | " .. d.ActionText
-			if not seen[key] then seen[key] = true; print("[Prompt]", d.Parent:GetFullName(), "|", d.ActionText) end
+			if not seen[key] then seen[key] = true; log("[Prompt]", d.Parent:GetFullName(), "|", d.ActionText) end
 		elseif d:IsA("Model") and next(d:GetAttributes()) then
 			if not seen[d.Name] then
 				seen[d.Name] = true
 				local a = {}
 				for k, v in pairs(d:GetAttributes()) do table.insert(a, k .. "=" .. tostring(v)) end
-				print("[Attr]", d:GetFullName(), table.concat(a, ", "))
+				log("[Attr]", d:GetFullName(), table.concat(a, ", "))
 			end
 		end
 	end
-	for k, v in pairs(player:GetAttributes()) do print("[PlayerAttr]", k, v) end
+	for k, v in pairs(player:GetAttributes()) do log("[PlayerAttr]", k, v) end
 	for _, d in ipairs(RS:GetDescendants()) do
-		if d:IsA("RemoteEvent") or d:IsA("RemoteFunction") then print("[Remote]", d:GetFullName()) end
+		if d:IsA("RemoteEvent") or d:IsA("RemoteFunction") then log("[Remote]", d:GetFullName()) end
 	end
-	print("[Scan] Готово")
+	local clip = setclipboard or toclipboard or (syn and syn.write_clipboard) or (Clipboard and Clipboard.set)
+	local ok = clip and pcall(clip, table.concat(out, "\n"))
+	print(ok and "[Scan] Готово, скопировано в буфер" or "[Scan] Готово (буфер недоступен, смотри F9)")
+	return ok
 end
 
 ----------------------------------------------------------------- LOOPS
@@ -578,7 +588,8 @@ local function action(title, fn)
 	corner(b, 8)
 	b.MouseEnter:Connect(function() tween(b, { BackgroundTransparency = 0.15 }) end)
 	b.MouseLeave:Connect(function() tween(b, { BackgroundTransparency = 0 }) end)
-	b.MouseButton1Click:Connect(function() if not scrollMoved then fn() end end)
+	b.MouseButton1Click:Connect(function() if not scrollMoved then fn(b) end end)
+	return b
 end
 
 section("Фарм")
@@ -597,7 +608,12 @@ slider("Радиус поиска руды", "OreSearchRadius", 0, 500, 10)
 slider("Время на руду, сек", "MaxTimePerOre", 0, 30, 1)
 slider("Топливо, %", "FuelTargetPct", 10, 100, 5)
 slider("Макс. цена трупа", "CorpseMaxValue", 0, 2000, 50)
-action("Scan  ·  F9", scan)
+action("Scan  ·  копировать", function(b)
+	b.Text = "Сканирую..."
+	local ok = scan()
+	b.Text = ok and "Скопировано ✓" or "Нет буфера · F9"
+	task.delay(2, function() if b.Parent then b.Text = "Scan  ·  копировать" end end)
+end)
 new("TextLabel", {
 	Text = "RightShift — скрыть  ·  × — закрыть", Font = FONT, TextSize = 11, TextColor3 = T.Sub,
 	BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 14), LayoutOrder = nextOrder(),
