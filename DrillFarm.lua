@@ -91,6 +91,7 @@ end
 
 local function pos(obj)
 	if obj:IsA("BasePart") then return obj.Position end
+	if obj:IsA("Attachment") then return obj.WorldPosition end
 	if obj:IsA("Model") then
 		local ok, cf = pcall(obj.GetPivot, obj)
 		if ok then return cf.Position end
@@ -788,23 +789,49 @@ local function burnStep()
 	end
 end
 
--- Сундуки: узел с SessionChestId; открываем только Locked=false и ChestOpenState=Idle
+-- Сундуки: ищем активные промпты сундуков/ящиков ("Interact", "Open Chest"...).
+-- Пропускаем запертые (Locked=true у узла) и уже открытые.
 local chestTried = setmetatable({}, { __mode = "k" })
+local function chestInfo(prompt)
+	local node = prompt
+	local isChest = false
+	for _ = 1, 6 do
+		node = node.Parent
+		if not node or node == workspace then break end
+		if node:GetAttribute("Locked") == true then return nil end
+		local st = node:GetAttribute("ChestOpenState")
+		if st and st ~= "Idle" then return nil end
+		if node:GetAttribute("SessionChestId") or node:GetAttribute("RuntimeChestModel")
+			or hasKey(node.Name, { "Chest", "Crate" }) then
+			isChest = true
+		end
+	end
+	return isChest
+end
 local function chestStep()
 	local list = {}
 	for _, d in ipairs(workspace:GetDescendants()) do
-		if d:GetAttribute("SessionChestId") and d:GetAttribute("Locked") == false
-			and d:GetAttribute("ChestOpenState") == "Idle" and (chestTried[d] or 0) < os.clock() then
+		if d:IsA("ProximityPrompt") and d.Enabled and (chestTried[d] or 0) < os.clock()
+			and hasKey(d.ActionText, { "Interact", "Open" }) and chestInfo(d) then
 			table.insert(list, d)
 		end
 	end
-	local chest = nearest(list, CONFIG.ChestRadius)
-	if not chest then return end
-	chestTried[chest] = os.clock() + 20
-	if moveTo(chest, function() return State.Collect end) then
+	local best, bd = nil, CONFIG.ChestRadius > 0 and CONFIG.ChestRadius or math.huge
+	for _, pr in ipairs(list) do
+		local d = dist(pr.Parent)
+		if d < bd then best, bd = pr, d end
+	end
+	if not best then return end
+	chestTried[best] = os.clock() + 20
+	if moveTo(best.Parent, function() return State.Collect end) then
 		task.wait(0.2)
-		firePrompt(chest)
-		task.wait(1)
+		if fireproximityprompt then
+			fireproximityprompt(best)
+		else
+			best:InputHoldBegin(); task.wait(best.HoldDuration + 0.05); best:InputHoldEnd()
+		end
+		status("[Chest] открываю: " .. best.Parent:GetFullName())
+		task.wait(1.2)
 	end
 end
 
