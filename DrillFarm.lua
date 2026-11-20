@@ -239,6 +239,8 @@ local function swing(tool, target)
 	end
 end
 
+local pickupOresNear -- определяется ниже (после collect)
+
 local function farmStep()
 	if bagFull() then
 		local drill = workspace:FindFirstChild(CONFIG.DrillName)
@@ -304,7 +306,8 @@ local function farmStep()
 		swing(tool, ore)
 		task.wait(0.25)
 	end
-	task.wait(0.3)
+	task.wait(0.4)
+	if State.Farm and not oreAlive(node) and pickupOresNear then pickupOresNear(p, 25) end
 end
 
 local function knit(service, name)
@@ -362,6 +365,34 @@ local function collectItems()
 			end
 		end
 	end
+end
+
+-- Поднять выпавшую руду (DisplayCategory=Ore) рядом с точкой
+pickupOresNear = function(center, radius)
+	local folder = workspace:FindFirstChild("Items")
+	local pickup = knit("CarryInventoryService", "Pickup")
+	if not folder or not pickup then return end
+	local t0 = os.clock()
+	repeat -- руда может появиться не сразу
+		local found = false
+		for _, it in ipairs(folder:GetChildren()) do
+			if not State.Farm or bagFull() then return end
+			local p = pos(it)
+			if it:GetAttribute("DisplayCategory") == "Ore" and p and (p - center).Magnitude <= radius
+				and (skipUntil[it] or 0) < os.clock() then
+				found = true
+				if moveTo(it, function() return State.Farm end) then
+					task.wait(0.15)
+					local before = attr(CONFIG.BagCountAttr)
+					pcall(function() pickup:InvokeServer(it) end)
+					task.wait(CONFIG.PickupDelay)
+					if it.Parent and attr(CONFIG.BagCountAttr) == before then skipUntil[it] = os.clock() + 60 end
+				end
+			end
+		end
+		if found then return end
+		task.wait(0.3)
+	until os.clock() - t0 > 2
 end
 
 -- Только предметы из Workspace.Items; сундуки/двери/NPC не трогаем
