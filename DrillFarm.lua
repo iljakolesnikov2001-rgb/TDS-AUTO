@@ -12,8 +12,8 @@ local CONFIG = {
 	PickaxeName     = "Pickaxe",
 
 	-- Сумка (атрибуты игрока/персонажа)
-	BagCountAttr    = "BagCount",
-	BagCapacityAttr = "BagCapacity",
+	BagCountAttr    = "CarryUsage",     -- атрибут игрока (из скана)
+	BagCapacityAttr = "CarryCapacity",
 
 	-- Магазин
 	ShopName        = "Shop",
@@ -24,6 +24,7 @@ local CONFIG = {
 
 	-- Сбор
 	IgnoredItems    = { "Rock" },
+	ItemsMinValue   = 0,               -- собирать предметы с Value >= N (Workspace.Items)
 	AmmoNames       = { "Ammo" },
 	AmmoRadius      = 25,
 
@@ -33,9 +34,9 @@ local CONFIG = {
 	MaxFuelAttr     = "MaxFuel",
 	FuelTargetPct   = 95,
 	RefuelPromptKey = "Fuel",          -- подстрока в ActionText/Name промпта
-	GateName        = "DungeonGate",
+	GateName        = "DungeonGate_",  -- Workspace.DungeonGate_Tier1B и т.д.
 	GateStopDist    = 60,
-	GatePromptKey   = "DungeonDoorReady",
+	GatePromptKey   = "Enter",
 
 	-- Трупы
 	CorpseKey       = "Corpse",
@@ -213,7 +214,34 @@ local function farmStep()
 	end
 end
 
+local function knit(service, name)
+	local idx = RS:FindFirstChild("Packages") and RS.Packages:FindFirstChild("_Index")
+	if not idx then return end
+	for _, d in ipairs(idx:GetDescendants()) do
+		if d.Name == name and d.Parent and d.Parent.Parent and d.Parent.Parent.Name == service then return d end
+	end
+end
+
+-- Предметы лежат в Workspace.Items (атрибуты Value, Category, DisplayName)
+local function collectItems()
+	local folder = workspace:FindFirstChild("Items")
+	local pickup = knit("CarryInventoryService", "Pickup")
+	if not folder or not pickup then return end
+	for _, it in ipairs(folder:GetChildren()) do
+		if not State.Collect or bagFull() then return end
+		local v = it:GetAttribute("Value") or 0
+		local name = it:GetAttribute("DisplayName") or it.Name
+		if v >= CONFIG.ItemsMinValue and not hasKey(name, CONFIG.IgnoredItems) then
+			tp(it)
+			task.wait(0.15)
+			pcall(function() pickup:InvokeServer(it) end)
+			task.wait(0.1)
+		end
+	end
+end
+
 local function collectStep(onlyAmmo)
+	if not onlyAmmo then collectItems() end
 	for _, d in ipairs(workspace:GetDescendants()) do
 		if d:IsA("ProximityPrompt") or d:IsA("TouchTransmitter") then
 			local item = d.Parent
@@ -249,7 +277,7 @@ local function autoBuyStep()
 end
 
 local function getDrill()
-	return workspace:FindFirstChild(CONFIG.DrillName, true)
+	return workspace:FindFirstChild(CONFIG.DrillName) or workspace:FindFirstChild(CONFIG.DrillName, true)
 end
 
 local function fuelStep()
@@ -264,7 +292,10 @@ end
 local function gateStep()
 	local drill = getDrill()
 	if not drill then return end
-	local gates = findAll(function(d) return d.Name == CONFIG.GateName end)
+	local gates = {}
+	for _, g in ipairs(workspace:GetChildren()) do
+		if g:IsA("Model") and string.sub(g.Name, 1, #CONFIG.GateName) == CONFIG.GateName then table.insert(gates, g) end
+	end
 	for _, g in ipairs(gates) do
 		local p1, p2 = pos(g), pos(drill)
 		if p1 and p2 and (p1 - p2).Magnitude <= CONFIG.GateStopDist then
@@ -286,19 +317,19 @@ local function burnStep()
 end
 
 local function highlightStep()
-	for _, d in ipairs(workspace:GetDescendants()) do
-		if d:IsA("Humanoid") then
-			local m = d.Parent
-			if m and m:IsA("Model") and not isCharacter(m) then
-				local want = #CONFIG.MonsterFilter == 0 or hasKey(m.Name, CONFIG.MonsterFilter)
-				local h = m:FindFirstChild("_DF_HL")
-				if State.Highlight and want and not h then
-					h = Instance.new("Highlight")
-					h.Name, h.FillColor, h.FillTransparency = "_DF_HL", CONFIG.HighlightColor, 0.6
-					h.Parent = m
-				elseif h and (not State.Highlight or not want) then
-					h:Destroy()
-				end
+	local folder = workspace:FindFirstChild("Npc")
+	if not folder then return end
+	for _, m in ipairs(folder:GetChildren()) do
+		if m:IsA("Model") then
+			local enemy = m:GetAttribute("NpcFaction") == "Enemy"
+			local want = enemy and (#CONFIG.MonsterFilter == 0 or hasKey(m.Name, CONFIG.MonsterFilter))
+			local h = m:FindFirstChild("_DF_HL")
+			if State.Highlight and want and not h then
+				h = Instance.new("Highlight")
+				h.Name, h.FillColor, h.FillTransparency = "_DF_HL", CONFIG.HighlightColor, 0.6
+				h.Parent = m
+			elseif h and (not State.Highlight or not want) then
+				h:Destroy()
 			end
 		end
 	end
@@ -324,6 +355,20 @@ local function scan()
 				local a = {}
 				for k, v in pairs(d:GetAttributes()) do table.insert(a, k .. "=" .. tostring(v)) end
 				log("[Attr]", d:GetFullName(), table.concat(a, ", "))
+			end
+		end
+	end
+	local r = hrp()
+	if r then
+		local near = {}
+		for _, d in ipairs(workspace:GetDescendants()) do
+			if (d:IsA("BasePart") or d:IsA("Model")) and not d:IsDescendantOf(player.Character)
+				and d.Parent and not near[d.Name] then
+				local p = pos(d)
+				if p and (p - r.Position).Magnitude < 20 then
+					near[d.Name] = true
+					log("[Near]", d.ClassName, d:GetFullName())
+				end
 			end
 		end
 	end
