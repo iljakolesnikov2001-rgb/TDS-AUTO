@@ -50,7 +50,6 @@ local CONFIG = {
 	KillRadius      = 80,              -- Kill Aura: монстры в этом радиусе
 	GateRadius      = 1500,            -- как далеко искать ворота подземелья (летим к ним)
 	DungeonRadius   = 400,             -- Авто-данж: ищем монстров и сундуки в этом радиусе
-	KillHeight      = 1,             -- на сколько студов над макушкой монстра парим (сервер: до +2 работает; ниже — под землёй — не засчитывает)
 	KillTimeout     = 30,              -- сек на одного монстра
 
 	-- Подсветка
@@ -472,7 +471,15 @@ local function equipBest(pick)
 	end
 	if not best then return end
 	local at = gameTool()
-	if at and at.Tool == best and best.Parent == c then return best end
+	-- EquipTool — переключатель: повторный вызов на уже экипированном инструменте СНИМАЕТ его
+	if best.Parent == c then
+		for _ = 1, 6 do
+			at = gameTool()
+			if at and at.Tool == best then break end
+			task.wait(0.1)
+		end
+		return best
+	end
 	local eq = knit("ToolService", "EquipTool")
 	if not eq then return end
 	pcall(function() eq:InvokeServer(best) end)
@@ -701,7 +708,10 @@ local function collectItems()
 		end
 		local v = it:GetAttribute("Value") or 0
 		local name = it:GetAttribute("DisplayName") or it.Name
-		if it:GetAttribute("ItemDatabaseId") == "Money_Sack" then
+		-- в режиме данжа не летаем за лутом по всей карте (там и погибал персонаж)
+		if not State.Collect and dist(it) > CONFIG.DungeonRadius then
+			-- пропуск
+		elseif it:GetAttribute("ItemDatabaseId") == "Money_Sack" then
 			if (skipUntil[it] or 0) < os.clock() and not grabSack(it) then skipUntil[it] = os.clock() + 30 end
 		elseif v >= CONFIG.ItemsMinValue and not hasKey(name, CONFIG.IgnoredItems)
 			and (skipUntil[it] or 0) < os.clock() then
@@ -1099,8 +1109,6 @@ end
 ----------------------------------------------------------------- KILL AURA / DUNGEON
 -- Бьём монстров мечом, паря над макушкой монстра и глядя на него.
 local RunService = game:GetService("RunService")
-local killUp = CONFIG.KillHeight
-local upByName = {} -- найденная рабочая высота для каждого типа монстра (у крупных «макушка» для сервера ниже)
 local killSkip = setmetatable({}, { __mode = "k" })
 local Killing = false
 local lastSurface
@@ -1121,25 +1129,34 @@ local function enemies(radius)
 	return out
 end
 
--- Над головой монстра: сервер засчитывает удар, пока корень не выше макушки монстра больше чем на 2 st
--- (и не ниже его подошвы +2 — «под землёй» не работает). Меч бьёт на 13 st, а моб снизу не достаёт.
+-- Позиция для удара (смещение от центра монстра). Опытным путём: над монстром не выше макушки+2 и
+-- сбоку в пределах ~6 st работает; точное зависит от монстра и стен — поэтому перебираем по кругу,
+-- пока не пойдёт урон, и запоминаем рабочий вариант.
+local killCands = {
+	Vector3.new(0, 4, 0),  -- над головой (моб снизу не достаёт)
+	Vector3.new(6, 3, 0),  -- сбоку, подальше
+	Vector3.new(0, 3, 6),
+	Vector3.new(3, 0, 0),  -- вплотную на уровне груди (всегда работает, но моб бьёт в ответ)
+}
+local killIdx = 1
 local function standUnder(m)
 	local ok, cf, size = pcall(m.GetBoundingBox, m)
-	if not ok then local p = pos(m); return p and p + Vector3.new(0, 3 + killUp, 0), p, p end
-	local base = Vector3.new(cf.Position.X, cf.Position.Y - size.Y / 2, cf.Position.Z)
-	return base + Vector3.new(0, size.Y + killUp, 0), base, cf.Position
+	if not ok then local p = pos(m); return p and p + Vector3.new(0, 3, 0), p, p end
+	local mid = cf.Position
+	local base = Vector3.new(mid.X, mid.Y - size.Y / 2, mid.Z)
+	return mid + killCands[killIdx], base, mid
 end
 
 local function killOne(m)
 	local h = m:FindFirstChild("Humanoid")
 	local tool = equipWeapon()
 	if not (h and tool) then killSkip[m] = os.clock() + 30; return end
-	killUp = upByName[m.Name] or CONFIG.KillHeight
 	local stand, base, mid = standUnder(m)
 	if not stand then return end
 	if not moveTo(m, function() return State.KillAura or State.Dungeon end, stand) then return end
 	Moving = true -- ноклип на время удара
 	local t0, lastHp, lastHit = os.clock(), h.Health, os.clock()
+	local misses = 0
 	while Running and (State.KillAura or State.Dungeon) and m.Parent and h.Health > 0 do
 		local r = hrp()
 		stand, base, mid = standUnder(m)
@@ -1148,12 +1165,11 @@ local function killOne(m)
 		r.AssemblyLinearVelocity = Vector3.zero
 		r.CFrame = CFrame.lookAt(stand, mid)
 		swing(tool)
-		if h.Health < lastHp - 0.01 then lastHp, lastHit = h.Health, os.clock(); upByName[m.Name] = killUp end
-		if os.clock() - lastHit > 1.2 then -- урона нет: опускаемся ближе к монстру
-			if killUp <= -3 then break end
-			killUp = killUp - 1
-			status("[Kill] нет урона — высота над макушкой " .. killUp)
-			lastHit = os.clock()
+		if h.Health < lastHp - 0.01 then lastHp, lastHit = h.Health, os.clock() end
+		if os.clock() - lastHit > 1.2 then -- урона нет: следующая позиция из списка
+			killIdx = killIdx % #killCands + 1
+			lastHit, misses = os.clock(), misses + 1
+			if misses > #killCands * 2 then break end -- два круга без урона — пропускаем монстра
 		end
 		if CONFIG.KillTimeout > 0 and os.clock() - t0 > CONFIG.KillTimeout then break end
 		RunService.Heartbeat:Wait()
@@ -1161,7 +1177,7 @@ local function killOne(m)
 	Moving = false
 	local dead = not m.Parent or h.Health <= 0
 	if not dead then killSkip[m] = os.clock() + 30 end
-	status(("[Kill] %s: %s за %.1fс (над макушкой %s)"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0, killUp))
+	status(("[Kill] %s: %s за %.1fс"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0))
 end
 
 -- true — были монстры (шаг занят), false — убивать некого
@@ -1641,7 +1657,6 @@ section("Настройки")
 slider("Радиус поиска руды", "OreSearchRadius", 0, 500, 10)
 slider("Радиус Kill Aura", "KillRadius", 10, 300, 10)
 slider("Радиус данжа", "DungeonRadius", 50, 1000, 50)
-slider("Высота над монстром", "KillHeight", -2, 2, 0.5)
 slider("Время на руду, сек", "MaxTimePerOre", 0, 30, 1)
 slider("Топливо, %", "FuelTargetPct", 10, 100, 5)
 slider("Макс. цена трупа", "CorpseMaxValue", 0, 2000, 50)
