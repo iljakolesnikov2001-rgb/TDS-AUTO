@@ -240,25 +240,16 @@ local function collectItems()
 	end
 end
 
+-- Только предметы из Workspace.Items; сундуки/двери/NPC не трогаем
 local function collectStep(onlyAmmo)
-	if not onlyAmmo then collectItems() end
-	for _, d in ipairs(workspace:GetDescendants()) do
-		if d:IsA("ProximityPrompt") or d:IsA("TouchTransmitter") then
-			local item = d.Parent
-			if item and not isCharacter(item:FindFirstAncestorOfClass("Model") or item) then
-				local isAmmo = hasKey(item.Name, CONFIG.AmmoNames)
-				local inShop = item:FindFirstAncestor(CONFIG.ShopName) ~= nil
-				local ok = (onlyAmmo and isAmmo and dist(item) <= CONFIG.AmmoRadius)
-					or (not onlyAmmo and not hasKey(item.Name, CONFIG.IgnoredItems))
-				if ok and not inShop then
-					if d:IsA("ProximityPrompt") then
-						if not onlyAmmo then tp(item) end
-						if fireproximityprompt then fireproximityprompt(d) end
-					else
-						touch(item)
-					end
-				end
-			end
+	if not onlyAmmo then return collectItems() end
+	local folder = workspace:FindFirstChild("Items")
+	if not folder then return end
+	for _, it in ipairs(folder:GetChildren()) do
+		local name = (it:GetAttribute("DisplayName") or it.Name)
+		if hasKey(name, CONFIG.AmmoNames) and dist(it) <= CONFIG.AmmoRadius then
+			local pickup = knit("CarryInventoryService", "Pickup")
+			if pickup then pcall(function() pickup:InvokeServer(it) end) end
 		end
 	end
 end
