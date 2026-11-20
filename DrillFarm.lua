@@ -44,7 +44,7 @@ local CONFIG = {
 	BurnPromptKey   = "Burn",
 
 	-- Сундуки
-	ChestRadius     = 150,             -- открывать только незапертые сундуки в этом радиусе
+	ChestRadius     = 150,             -- авто-сбор открывает незапертые сундуки в этом радиусе
 
 	-- Подсветка
 	MonsterFilter   = {},              -- пусто = все монстры
@@ -64,7 +64,7 @@ local player   = Players.LocalPlayer
 local Running = true
 local Connections = {}
 local State = { Farm=false, Collect=false, Ammo=false, AutoBuy=false,
-                Fuel=false, Gate=false, Burn=false, Highlight=false, Chests=false }
+                Fuel=false, Gate=false, Burn=false, Highlight=false, Noclip=false }
 
 ----------------------------------------------------------------- HELPERS
 local function hrp()
@@ -99,9 +99,12 @@ local function tp(obj, offset)
 end
 
 -- Плавный перелёт (вместо мгновенного ТП); возвращает false, если прервали
+local Moving = false -- пока скрипт двигает персонажа, включён ноклип
 local function moveTo(obj, stillOk, targetPos)
 	local r, p = hrp(), pos(obj)
 	if not (r and p) then return false end
+	Moving = true
+	local okc, ok = pcall(function()
 	local target = targetPos or (p + Vector3.new(0, 3, 0))
 	while true do
 		r = hrp()
@@ -113,6 +116,9 @@ local function moveTo(obj, stillOk, targetPos)
 		r.CFrame = CFrame.new(r.Position + d.Unit * step)
 		task.wait(0.05)
 	end
+	end)
+	Moving = false
+	return okc and ok
 end
 
 local function attr(name)
@@ -478,7 +484,7 @@ local function chestStep()
 	local chest = nearest(list, CONFIG.ChestRadius)
 	if not chest then return end
 	chestTried[chest] = os.clock() + 20
-	if moveTo(chest, function() return State.Chests end) then
+	if moveTo(chest, function() return State.Collect end) then
 		task.wait(0.2)
 		firePrompt(chest)
 		task.wait(1)
@@ -561,9 +567,9 @@ end
 
 ----------------------------------------------------------------- LOOPS
 local loops = {
-	Farm = farmStep, Collect = function() collectStep(false) end,
+	Farm = farmStep, Collect = function() chestStep(); collectStep(false) end,
 	Ammo = function() collectStep(true) end, AutoBuy = autoBuyStep,
-	Fuel = fuelStep, Gate = gateStep, Burn = burnStep, Chests = chestStep,
+	Fuel = fuelStep, Gate = gateStep, Burn = burnStep,
 }
 for name, fn in pairs(loops) do
 	task.spawn(function()
@@ -576,6 +582,23 @@ end
 task.spawn(function()
 	while Running do pcall(highlightStep); task.wait(1) end
 end)
+
+-- Noclip: всегда, если включён тумблер, и автоматически во время перелётов скрипта
+local noclipWas = {}
+table.insert(Connections, game:GetService("RunService").Stepped:Connect(function()
+	local c = player.Character
+	if not c then return end
+	local on = State.Noclip or Moving
+	for _, part in ipairs(c:GetDescendants()) do
+		if part:IsA("BasePart") then
+			if on then
+				if part.CanCollide then noclipWas[part] = true; part.CanCollide = false end
+			elseif noclipWas[part] then
+				noclipWas[part] = nil; part.CanCollide = true
+			end
+		end
+	end
+end))
 
 ----------------------------------------------------------------- UI
 local TweenService = game:GetService("TweenService")
@@ -846,7 +869,7 @@ action("Телепорт к дрели", function(b)
 end)
 section("Прочее")
 toggle("Burn", "Сжигание трупов")
-toggle("Chests", "Открывать сундуки")
+toggle("Noclip", "Noclip")
 toggle("Highlight", "Подсветка монстров")
 section("Настройки")
 slider("Радиус поиска руды", "OreSearchRadius", 0, 500, 10)
