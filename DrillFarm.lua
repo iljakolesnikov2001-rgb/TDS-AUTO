@@ -50,7 +50,7 @@ local CONFIG = {
 	KillRadius      = 80,              -- Kill Aura: монстры в этом радиусе
 	GateRadius      = 1500,            -- как далеко искать ворота подземелья (летим к ним)
 	DungeonRadius   = 400,             -- Авто-данж: ищем монстров и сундуки в этом радиусе
-	KillDepth       = 1,               -- на сколько студов ниже обычной стойки (ноги в полу). Проверено: 1 работает, 2+ сервер не засчитывает; 0 = на полу
+	KillHeight      = 1.5,             -- на сколько студов над макушкой монстра парим (сервер: до +2 работает; ниже — под землёй — не засчитывает)
 	KillTimeout     = 30,              -- сек на одного монстра
 
 	-- Подсветка
@@ -1097,9 +1097,9 @@ local function highlightStep()
 end
 
 ----------------------------------------------------------------- KILL AURA / DUNGEON
--- Бьём монстров мечом, стоя ногами в полу сбоку от монстра и глядя на него. Глубже 1 st сервер удар не засчитывает.
+-- Бьём монстров мечом, паря над макушкой монстра и глядя на него.
 local RunService = game:GetService("RunService")
-local killDepth = CONFIG.KillDepth
+local killUp = CONFIG.KillHeight
 local killSkip = setmetatable({}, { __mode = "k" })
 local Killing = false
 local lastSurface
@@ -1120,13 +1120,13 @@ local function enemies(radius)
 	return out
 end
 
+-- Над головой монстра: сервер засчитывает удар, пока корень не выше макушки монстра больше чем на 2 st
+-- (и не ниже его подошвы +2 — «под землёй» не работает). Меч бьёт на 13 st, а моб снизу не достаёт.
 local function standUnder(m)
 	local ok, cf, size = pcall(m.GetBoundingBox, m)
-	local p = ok and Vector3.new(cf.Position.X, cf.Position.Y - size.Y / 2, cf.Position.Z) or pos(m)
-	local mid = ok and cf.Position or p
-	-- сбоку (2.5 st) и ниже подошвы: меч бьёт в конус перед персонажем, поэтому смотрим на монстра
-	-- корень персонажа в обычной стойке на 3 st выше подошвы; сервер засчитывает удар, пока он не ниже +2 st
-	return p and p + Vector3.new(2.5, 3 - killDepth, 0), p, mid
+	if not ok then local p = pos(m); return p and p + Vector3.new(0, 3 + killUp, 0), p, p end
+	local base = Vector3.new(cf.Position.X, cf.Position.Y - size.Y / 2, cf.Position.Z)
+	return base + Vector3.new(0, size.Y + killUp, 0), base, cf.Position
 end
 
 local function killOne(m)
@@ -1147,10 +1147,10 @@ local function killOne(m)
 		r.CFrame = CFrame.lookAt(stand, mid)
 		swing(tool)
 		if h.Health < lastHp - 0.01 then lastHp, lastHit = h.Health, os.clock() end
-		if os.clock() - lastHit > 1.5 then -- урона нет: поднимаемся ближе к монстру
-			if killDepth <= 0 then break end
-			killDepth = math.max(0, killDepth - 1)
-			status("[Kill] нет урона — глубина " .. killDepth)
+		if os.clock() - lastHit > 2.5 then -- урона нет: опускаемся ближе к монстру
+			if killUp <= -3 then break end
+			killUp = killUp - 1
+			status("[Kill] нет урона — высота над макушкой " .. killUp)
 			lastHit = os.clock()
 		end
 		if CONFIG.KillTimeout > 0 and os.clock() - t0 > CONFIG.KillTimeout then break end
@@ -1159,7 +1159,7 @@ local function killOne(m)
 	Moving = false
 	local dead = not m.Parent or h.Health <= 0
 	if not dead then killSkip[m] = os.clock() + 30 end
-	status(("[Kill] %s: %s за %.1fс (глубина %s)"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0, killDepth))
+	status(("[Kill] %s: %s за %.1fс (над макушкой %s)"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0, killUp))
 end
 
 -- true — были монстры (шаг занят), false — убивать некого
@@ -1623,7 +1623,7 @@ section("Настройки")
 slider("Радиус поиска руды", "OreSearchRadius", 0, 500, 10)
 slider("Радиус Kill Aura", "KillRadius", 10, 300, 10)
 slider("Радиус данжа", "DungeonRadius", 50, 1000, 50)
-slider("Глубина (ноги в полу)", "KillDepth", 0, 3, 1)
+slider("Высота над монстром", "KillHeight", -2, 2, 0.5)
 slider("Время на руду, сек", "MaxTimePerOre", 0, 30, 1)
 slider("Топливо, %", "FuelTargetPct", 10, 100, 5)
 slider("Макс. цена трупа", "CorpseMaxValue", 0, 2000, 50)
