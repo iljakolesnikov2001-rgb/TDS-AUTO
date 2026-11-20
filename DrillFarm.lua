@@ -706,6 +706,16 @@ toggle("AutoBuy", "Автопокупка")
 section("Бур")
 toggle("Fuel", "Заправка")
 toggle("Gate", "Ворота подземелья")
+action("Телепорт к дрели", function(b)
+	local drill = getDrill()
+	if drill then
+		tp(drill, Vector3.new(0, 8, 0))
+		b.Text = "Готово ✓"
+	else
+		b.Text = "Дрель не найдена"
+	end
+	task.delay(1.5, function() if b.Parent then b.Text = "Телепорт к дрели" end end)
+end)
 section("Прочее")
 toggle("Burn", "Сжигание трупов")
 toggle("Highlight", "Подсветка монстров")
