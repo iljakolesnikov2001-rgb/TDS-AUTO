@@ -334,7 +334,11 @@ local function groundItems()
 	local out, seen = {}, {}
 	local folder = workspace:FindFirstChild("Items")
 	if folder then
-		for _, it in ipairs(folder:GetChildren()) do seen[it] = true; table.insert(out, it) end
+		for _, it in ipairs(folder:GetChildren()) do
+			seen[it] = true
+			-- товары магазина лежат там же, но без SessionSnapshotItemId
+			if it:GetAttribute("SessionSnapshotItemId") then table.insert(out, it) end
+		end
 	end
 	for _, d in ipairs(workspace:GetDescendants()) do
 		if not seen[d] and (d:IsA("Model") or d:IsA("BasePart")) and d:GetAttribute("SessionSnapshotItemId")
@@ -387,7 +391,7 @@ pickupOresNear = function(center, radius)
 		for _, it in ipairs(folder:GetChildren()) do
 			if not State.Farm or bagFull() then return end
 			local p = pos(it)
-			if it:GetAttribute("DisplayCategory") == "Ore" and p and (p - center).Magnitude <= radius
+			if it:GetAttribute("DisplayCategory") == "Ore" and it:GetAttribute("SessionSnapshotItemId") and p and (p - center).Magnitude <= radius
 				and (skipUntil[it] or 0) < os.clock() then
 				found = true
 				if moveTo(it, function() return State.Farm end) then
@@ -411,7 +415,7 @@ local function collectStep(onlyAmmo)
 	if not folder then return end
 	for _, it in ipairs(folder:GetChildren()) do
 		local name = (it:GetAttribute("DisplayName") or it.Name)
-		if hasKey(name, CONFIG.AmmoNames) and dist(it) <= CONFIG.AmmoRadius then
+		if it:GetAttribute("SessionSnapshotItemId") and hasKey(name, CONFIG.AmmoNames) and dist(it) <= CONFIG.AmmoRadius then
 			local pickup = knit("CarryInventoryService", "Pickup")
 			if pickup then pcall(function() pickup:InvokeServer(it) end) end
 		end
