@@ -337,7 +337,7 @@ end
 
 ----------------------------------------------------------------- SCANNER
 -- Скан: печать в F9 + копирование в буфер обмена
-local function scan()
+local function scan(nearOnly)
 	local out, seen = {}, {}
 	local function log(...)
 		local t = {}
@@ -345,7 +345,7 @@ local function scan()
 		local line = table.concat(t, " ")
 		print(line); table.insert(out, line)
 	end
-	for _, d in ipairs(workspace:GetDescendants()) do
+	for _, d in ipairs(nearOnly and {} or workspace:GetDescendants()) do
 		if d:IsA("ProximityPrompt") then
 			local key = d.Parent.Name .. " | " .. d.ActionText
 			if not seen[key] then seen[key] = true; log("[Prompt]", d.Parent:GetFullName(), "|", d.ActionText) end
@@ -365,12 +365,18 @@ local function scan()
 			if (d:IsA("BasePart") or d:IsA("Model")) and not d:IsDescendantOf(player.Character)
 				and d.Parent and not near[d.Name] then
 				local p = pos(d)
-				if p and (p - r.Position).Magnitude < 20 then
+				if p and (p - r.Position).Magnitude < 25 then
 					near[d.Name] = true
-					log("[Near]", d.ClassName, d:GetFullName())
+					local a = {}
+					for k, v in pairs(d:GetAttributes()) do table.insert(a, k .. "=" .. tostring(v)) end
+					log("[Near]", d.ClassName, d:GetFullName(), table.concat(a, ", "))
 				end
 			end
 		end
+	end
+	if nearOnly then
+		print("[Scan] Готово, строк: " .. #out)
+		return table.concat(out, "\n")
 	end
 	for k, v in pairs(player:GetAttributes()) do log("[PlayerAttr]", k, v) end
 	for _, d in ipairs(RS:GetDescendants()) do
@@ -657,15 +663,19 @@ slider("Топливо, %", "FuelTargetPct", 10, 100, 5)
 slider("Макс. цена трупа", "CorpseMaxValue", 0, 2000, 50)
 local lastScan
 local copyBtn
-action("Scan", function(b)
-	b.Text = "Сканирую..."
-	lastScan = scan()
-	b.Text = "Scan  ✓"
-	copyBtn.BackgroundColor3 = T.Accent
-	copyBtn.TextColor3 = T.Text
-	copyBtn.Text = "Копировать скан"
-	task.delay(2, function() if b.Parent then b.Text = "Scan" end end)
-end)
+local function scanBtn(title, nearOnly)
+	action(title, function(b)
+		b.Text = "Сканирую..."
+		lastScan = scan(nearOnly)
+		b.Text = title .. "  ✓"
+		copyBtn.BackgroundColor3 = T.Accent
+		copyBtn.TextColor3 = T.Text
+		copyBtn.Text = "Копировать скан"
+		task.delay(2, function() if b.Parent then b.Text = title end end)
+	end)
+end
+scanBtn("Scan", false)
+scanBtn("Scan рядом (25 st)", true)
 copyBtn = action("Копировать скан", function(b)
 	if not lastScan then return end
 	local ok = copyText(lastScan)
