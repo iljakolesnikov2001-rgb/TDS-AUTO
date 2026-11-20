@@ -1,68 +1,49 @@
 -- DrillFarm.lua — Drill to Earth's Core
--- Фарм руды, сбор, автопокупка, топливо, ворота подземелья, сжигание трупов, подсветка монстров.
--- ВАЖНО: имена объектов в игре неизвестны заранее. Сначала нажмите "Scan" в меню,
--- посмотрите вывод в консоли (F9) и поправьте CONFIG.
+-- Одна кнопка «Авто-фарм»: бур едет сам, по дороге скрипт открывает сундуки, собирает лут и топливо,
+-- заходит в подземелья, продаёт добычу, качает урон бура, заправляет его и прячется под землю при низком HP.
 
 ----------------------------------------------------------------- CONFIG
 local CONFIG = {
-	-- Руда
-	OreNames        = {},    -- типы руды (SessionOreType: "Coal", "Iron"...); пусто = любая
-	MaxTimePerOre   = 8,     -- сек; 0 = без лимита
-	OreSearchRadius = 150,   -- студов; 0 = без лимита
-	PickaxeName     = "Pickaxe",
+	-- Авто-фарм
+	WorkRadius       = 300,  -- сундуки/лут/монстры ищем в этом радиусе от бура (дальше игра телепортирует к буру)
+	GateStopDist     = 150,  -- останавливаемся у ворот подземелья ближе этого (по горизонтали: ворота стоят сбоку)
+	WallStopDist     = 110,  -- перед финальной стеной (при ударе идёт волна врагов) ждём полное HP
+	GuardHpPct       = 55,   -- HP ниже — прячемся под землю
+	SafeHpPct        = 95,   -- выходим из укрытия, когда HP восстановилось
+	FuelTargetPct    = 50,   -- заправляем, когда топлива меньше (если в рюкзаке есть канистра)
+	FuelSearchRadius = 500,  -- топливо почти кончилось, канистр нет — ищем дальше
+	DriveMinFuel     = 3,
+	SellAtPct        = 70,   -- продаём, когда сумка заполнена на N% и стол продажи рядом с буром
+	DungeonRadius    = 250,  -- в подземелье: монстры/сундуки/лут в этом радиусе
+	KillRadius       = 80,   -- Kill Aura
+	KillTimeout      = 30,   -- сек на одного монстра
+	ChestRadius      = 150,
+	ItemsMinValue    = 0,
+	IgnoredItems     = { "Rock", "DeathChest" },
+	-- порядок покупки апгрейдов бура (сначала урон по стенам). Карточки за Robux не покупаются никогда.
+	UpgradePriority  = { "DrillPower", "MegaDrill", "UltraDrill", "PowerSlam", "RPMOverclock", "EngineOverdrive",
+		"PowerDrive", "DrillDefense", "HealthRegen", "TeamHealth", "FuelStorage", "SackStorage", "DriveSpeed" },
 
-	-- Сумка (атрибуты игрока/персонажа)
-	BagCountAttr    = "CarryUsage",     -- атрибут игрока (из скана)
-	BagCapacityAttr = "CarryCapacity",
+	-- Фарм руды (отдельный тумблер)
+	OreNames         = {},   -- типы руды (SessionOreType: "Coal", "Iron"...); пусто = любая
+	MaxTimePerOre    = 8,
+	OreSearchRadius  = 150,
+	PickaxeName      = "Pickaxe",
 
-	-- Магазин
-	ShopName        = "Shop",
-	RegisterName    = "Register",
-	BuyRemoteName   = "Buy",          -- RemoteFunction/RemoteEvent внутри ShopService
-	AutoBuyItems    = { "Ammo", "Medkit", "Grenade" },
-	AutoBuyLimit    = 3,              -- держать в инвентаре не меньше N штук
-
-	-- Сбор
-	IgnoredItems    = { "Rock" },
-	ItemsMinValue   = 0,               -- собирать предметы с Value >= N (Workspace.Items)
-	AmmoNames       = { "Ammo" },
-	AmmoRadius      = 25,
-
-	-- Бур
-	DrillName       = "Drill",
-	FuelAttr        = "Fuel",
-	MaxFuelAttr     = "MaxFuel",
-	FuelTargetPct   = 95,
-	RefuelPromptKey = "Fuel",          -- подстрока в ActionText/Name промпта
-	GateName        = "DungeonGate_",  -- Workspace.DungeonGate_Tier1B и т.д.
-	GateStopDist    = 60,
-	DriveMinFuel    = 3,               -- Авто-поездка: стоп, когда топлива меньше (ед.)
-	DriveMinHpPct   = 30,              -- Авто-поездка: стоп, когда здоровья меньше (%)
-	GatePromptKey   = "Enter",
-
-	-- Трупы
-	CorpseKey       = "Corpse",
-	CorpseMaxValue  = 300,
-	BurnPromptKey   = "Burn",
-
-	-- Сундуки
-	ChestRadius     = 150,             -- авто-сбор открывает незапертые сундуки в этом радиусе
-
-	-- Убийство монстров из-под земли (киркой: хитбокс удара считается от персонажа, пол не мешает)
-	KillRadius      = 80,              -- Kill Aura: монстры в этом радиусе
-	GateRadius      = 1500,            -- как далеко искать ворота подземелья (летим к ним)
-	DungeonRadius   = 400,             -- Авто-данж: ищем монстров и сундуки в этом радиусе
-	KillTimeout     = 30,              -- сек на одного монстра
-
-	-- Подсветка
-	MonsterFilter   = {},              -- пусто = все монстры
-	HighlightColor  = Color3.fromRGB(255, 60, 60),
-
-	SellKeepRarity  = { "Legendary", "Mythic", "Exotic", "Secret", "Divine" }, -- не продавать
-	SellKeepCategory= { "Fuel" },        -- не продавать (топливо)
-	MoveSpeed       = 540,              -- студов/сек при перелёте к предмету (меньше = безопаснее)
-	PickupDelay     = 0.6,             -- пауза после подбора, сек
-	Tick            = 0.25,
+	BagCountAttr     = "CarryUsage",
+	BagCapacityAttr  = "CarryCapacity",
+	DrillName        = "Drill",
+	FuelAttr         = "Fuel",
+	MaxFuelAttr      = "MaxFuel",
+	GateName         = "DungeonGate_",
+	GatePromptKey    = "Enter",
+	MonsterFilter    = {},   -- подсветка: пусто = все монстры
+	HighlightColor   = Color3.fromRGB(255, 60, 60),
+	SellKeepRarity   = { "Legendary", "Mythic", "Exotic", "Secret", "Divine" }, -- не продавать
+	SellKeepCategory = { "Fuel" },  -- топливо не продаём
+	MoveSpeed        = 540,  -- студов/сек при перелёте
+	PickupDelay      = 0.6,
+	Tick             = 0.25,
 }
 
 ----------------------------------------------------------------- SERVICES
@@ -74,9 +55,11 @@ local player   = Players.LocalPlayer
 local Running = true
 local Selling = false -- пока идёт продажа, остальные функции ждут
 local Connections = {}
-local State = { Farm=false, Collect=false, Ammo=false, AutoBuy=false,
-                Fuel=false, Gate=false, Burn=false, Highlight=false, Noclip=false, AutoSell=false, KillAura=false, Dungeon=false, AutoDrive=false }
-local function collecting() return State.Collect or State.Dungeon end
+local State = { Auto=false, Farm=false, KillAura=false, Noclip=false, Highlight=false, SkipCutscenes=true }
+local Stats = { chests=0, items=0, kills=0, dungeons=0, upgrades=0, hides=0, refuels=0, sells=0, start=nil }
+local Phase = "Выключено"
+local function collecting() return State.Auto end
+
 
 -- Статус: печать в F9 + строка внизу меню (видно и без консоли)
 local StatusLabel
@@ -103,6 +86,14 @@ if DF_BRIDGE and isfile and readfile and delfile and loadstring then
 			task.wait(0.5)
 		end
 	end)
+end
+
+-- Анти-AFK: перемещения через CFrame Roblox не считает активностью — без этого кик через 20 минут (278)
+do
+	local VU = game:GetService("VirtualUser")
+	table.insert(Connections, player.Idled:Connect(function()
+		pcall(function() VU:CaptureController(); VU:ClickButton2(Vector2.new()) end)
+	end))
 end
 
 ----------------------------------------------------------------- HELPERS
@@ -430,36 +421,14 @@ local function pickupItem(it)
 	return false
 end
 
-local function nearestShop()
-	local shops = findAll(function(d)
-		return d:IsA("Model") and hasKey(d.Name, {CONFIG.ShopName})
-	end)
-	local shop = nearest(shops)
-	return shop, shop and (shop:FindFirstChild(CONFIG.RegisterName, true) or shop)
-end
-
-local function buyRemote()
-	for _, d in ipairs(RS:GetDescendants()) do
-		if (d:IsA("RemoteFunction") or d:IsA("RemoteEvent")) and d.Name == CONFIG.BuyRemoteName then
-			return d
-		end
-	end
-end
-
-local function countTool(name)
-	local n = 0
-	for _, src in ipairs({ player.Backpack, player.Character }) do
-		if src then
-			for _, t in ipairs(src:GetChildren()) do
-				if t:IsA("Tool") and hasKey(t.Name, {name}) then n += 1 end
-			end
-		end
-	end
-	return n
-end
 
 ----------------------------------------------------------------- FEATURES
 local gameTool -- ниже (рядом со swing)
+-- ActiveTool.Tool — другой экземпляр того же инструмента: сравнивать только по имени
+-- (сравнение объектов давало «не в руке» → повторный EquipTool снимал меч, удары не шли)
+local function holds(at, tool)
+	return at ~= nil and at.Tool ~= nil and tool ~= nil and at.Tool.Name == tool.Name
+end
 -- pick(tool) -> число (приоритет) или nil; экипируем лучший подходящий инструмент
 local function equipBest(pick)
 	local c = player.Character
@@ -473,21 +442,24 @@ local function equipBest(pick)
 	end
 	if not best then return end
 	local at = gameTool()
-	-- EquipTool — переключатель: повторный вызов на уже экипированном инструменте СНИМАЕТ его
+	local eq = knit("ToolService", "EquipTool")
+	if not eq then return end
+	-- EquipTool — переключатель: повторный вызов на уже экипированном инструменте СНИМАЕТ его.
+	-- Но после езды/смерти инструмент бывает «в руке» без ActiveTool (удары не идут) — тогда снять и надеть заново.
 	if best.Parent == c then
 		for _ = 1, 6 do
 			at = gameTool()
-			if at and at.Tool == best then break end
+			if holds(at, best) then return best end
 			task.wait(0.1)
 		end
-		return best
+		local un = knit("ToolService", "UnequipTool")
+		if un then pcall(function() un:InvokeServer() end) end
+		task.wait(0.2)
 	end
-	local eq = knit("ToolService", "EquipTool")
-	if not eq then return end
 	pcall(function() eq:InvokeServer(best) end)
 	for _ = 1, 10 do
 		at = gameTool()
-		if at and at.Tool == best then return best end
+		if holds(at, best) then return best end
 		task.wait(0.1)
 	end
 	return best
@@ -533,7 +505,7 @@ gameTool = function()
 end
 local function swing(tool)
 	local at = gameTool()
-	if at and at.Tool == tool and at.Swing then pcall(at.Swing, at) end
+	if holds(at, tool) and at.Swing then pcall(at.Swing, at) end
 end
 
 local pickupOresNear -- определяется ниже (после collect)
@@ -544,7 +516,10 @@ local pickupOresNear -- определяется ниже (после collect)
 local lastSellPos
 local function findSellParts()
 	return findAll(function(d)
-		return d:IsA("BasePart") and d.Name == "SellPart" and d:FindFirstAncestor("TradingPost") ~= nil
+		-- столы в папках CutScene* — декорации катсцен, продать там нельзя
+		return d:IsA("BasePart") and d.Name == "SellPart"
+			and (d:FindFirstAncestor("TradingPost") or d:FindFirstAncestor("Sell_Table")) ~= nil
+			and not d:GetFullName():find("CutScene", 1, true)
 	end)
 end
 local function nearestSellPart()
@@ -581,7 +556,7 @@ end)
 local sellAll -- определяется ниже
 local function onBagFull(who)
 	-- Автопродажа включена и есть стол продажи — продаём; иначе — к дрели
-	local sell = State.AutoSell and nearestSellPart()
+	local sell = nearestSellPart()
 	if sell and sellAll then
 		tp(sell)
 		status("[" .. who .. "] Сумка полна — продажа")
@@ -596,10 +571,13 @@ local function onBagFull(who)
 	status("[" .. who .. "] Сумка полна — ТП к дрели")
 end
 
+-- Mining: авто-фарм копает уголь на топливо тем же кодом, не трогая тумблер «Фарм руды»
+local Mining = false
+local function farming() return State.Farm or Mining end
 local function farmStep()
 	if bagFull() then
 		onBagFull("Farm")
-		if bagFull() then State.Farm = false end
+		if bagFull() and not Mining then State.Farm = false end
 		return
 	end
 	local node = nearest(oreNodes(), CONFIG.OreSearchRadius)
@@ -645,10 +623,10 @@ local function farmStep()
 		return
 	end
 
-	if not moveTo(ore, function() return State.Farm end, stand) then return end
+	if not moveTo(ore, function() return farming() end, stand) then return end
 	local tool = equipPickaxe()
 	local start = os.clock()
-	while State.Farm and oreAlive(node) do
+	while farming() and oreAlive(node) do
 		if CONFIG.MaxTimePerOre > 0 and os.clock() - start > CONFIG.MaxTimePerOre then break end
 		if Selling then task.wait(0.3) continue end -- убийство монстров / продажа заняли персонажа
 		r = hrp()
@@ -662,13 +640,13 @@ local function farmStep()
 	end
 	status(("[Farm] %s: %s за %.1fс"):format(tostring(node:GetAttribute("SessionOreType")),
 		oreAlive(node) and "не добил" or "добыто", os.clock() - start))
-	if State.Farm and oreAlive(node) then
+	if farming() and oreAlive(node) then
 		-- не добили (слабая кирка/монстр мешает) — 30 сек не возвращаемся, иначе крутимся на одной жиле
 		node:SetAttribute("_DF_Skip", true)
 		task.delay(30, function() if node.Parent then node:SetAttribute("_DF_Skip", nil) end end)
 	end
 	task.wait(0.4)
-	if State.Farm and not oreAlive(node) and pickupOresNear then pickupOresNear(p, 25) end
+	if farming() and not oreAlive(node) and pickupOresNear then pickupOresNear(p, 25) end
 end
 
 
@@ -698,39 +676,7 @@ local function groundItems()
 end
 
 local grabSack -- ниже
-local function collectItems()
-	local items = groundItems()
-	table.sort(items, function(a, b) return dist(a) < dist(b) end)
-	for _, it in ipairs(items) do
-		if not collecting() then return end
-		if bagFull() then
-			onBagFull("Collect")
-			if bagFull() then State.Collect = false; State.Dungeon = false end
-			return
-		end
-		local v = it:GetAttribute("Value") or 0
-		local name = it:GetAttribute("DisplayName") or it.Name
-		-- в режиме данжа не летаем за лутом по всей карте (там и погибал персонаж)
-		if not State.Collect and dist(it) > CONFIG.DungeonRadius then
-			-- пропуск
-		elseif it:GetAttribute("ItemDatabaseId") == "Money_Sack" then
-			if (skipUntil[it] or 0) < os.clock() and not grabSack(it) then skipUntil[it] = os.clock() + 30 end
-		elseif v >= CONFIG.ItemsMinValue and not hasKey(name, CONFIG.IgnoredItems)
-			and (skipUntil[it] or 0) < os.clock() then
-			if moveTo(it, collecting) then
-				task.wait(0.15)
-				if pickupItem(it) then
-					status("[Collect] подобрал: " .. name)
-					task.wait(CONFIG.PickupDelay)
-				else
-					-- не поднялся (не влез/нельзя) — не возвращаемся к нему 60 сек
-					skipUntil[it] = os.clock() + 60
-					status("[Collect] не поднялся: " .. name)
-				end
-			end
-		end
-	end
-end
+
 
 -- Поднять выпавшую руду (DisplayCategory=Ore) рядом с точкой
 pickupOresNear = function(center, radius)
@@ -740,12 +686,12 @@ pickupOresNear = function(center, radius)
 	repeat -- руда может появиться не сразу
 		local found = false
 		for _, it in ipairs(folder:GetChildren()) do
-			if not State.Farm or bagFull() then return end
+			if not farming() or bagFull() then return end
 			local p = pos(it)
 			if it:GetAttribute("DisplayCategory") == "Ore" and it:GetAttribute("SessionSnapshotItemId") and p and (p - center).Magnitude <= radius
 				and (skipUntil[it] or 0) < os.clock() then
 				found = true
-				if moveTo(it, function() return State.Farm end) then
+				if moveTo(it, function() return farming() end) then
 					task.wait(0.15)
 					if pickupItem(it) then task.wait(CONFIG.PickupDelay) else skipUntil[it] = os.clock() + 60 end
 				end
@@ -970,49 +916,88 @@ sellAll = function(sellPart)
 	status(got > 0 and ("[Sell] готово, мешков подобрано: " .. got) or "[Sell] мешок с деньгами не найден/не поднялся")
 end
 
--- Только предметы из Workspace.Items; сундуки/двери/NPC не трогаем
-local function collectStep(onlyAmmo)
-	if not onlyAmmo then return collectItems() end
-	local folder = workspace:FindFirstChild("Items")
-	if not folder then return end
-	for _, it in ipairs(folder:GetChildren()) do
-		local name = (it:GetAttribute("DisplayName") or it.Name)
-		if it:GetAttribute("SessionSnapshotItemId") and hasKey(name, CONFIG.AmmoNames) and dist(it) <= CONFIG.AmmoRadius then
-			pickupItem(it)
-		end
-	end
-end
 
-local function autoBuyStep()
-	local remote = buyRemote()
-	if not remote then return end
-	for _, name in ipairs(CONFIG.AutoBuyItems) do
-		if countTool(name) < CONFIG.AutoBuyLimit then
-			pcall(function()
-				if remote:IsA("RemoteFunction") then remote:InvokeServer(name)
-				else remote:FireServer(name) end
-			end)
-		end
-	end
-end
-
+----------------------------------------------------------------- DRILL
 local function getDrill()
-	return workspace:FindFirstChild(CONFIG.DrillName) or workspace:FindFirstChild(CONFIG.DrillName, true)
+	return workspace:FindFirstChild(CONFIG.DrillName)
 end
-
-local function fuelStep()
-	local drill = getDrill()
-	if not drill then return end
-	local fuel, max = drill:GetAttribute(CONFIG.FuelAttr), drill:GetAttribute(CONFIG.MaxFuelAttr)
-	if fuel and max and max > 0 and fuel / max * 100 < CONFIG.FuelTargetPct then
-		firePrompt(drill, CONFIG.RefuelPromptKey)
+local function hum()
+	local c = player.Character
+	return c and c:FindFirstChildOfClass("Humanoid")
+end
+local function hpPct()
+	local h = hum()
+	return (h and h.MaxHealth > 0) and h.Health / h.MaxHealth * 100 or 0
+end
+local function alive()
+	local h = hum()
+	return h ~= nil and h.Health > 0 and hrp() ~= nil
+end
+-- атрибут InDungeon обновляется с опозданием на десятки секунд — держим свой флаг (вход/выход = телепорт)
+local dungeonActive = false
+local function inDungeon() return dungeonActive end
+-- расстояние по горизонтали (ворота и стены стоят в стороне/выше пути бура)
+local function flat(a, b) return Vector3.new(a.X - b.X, 0, a.Z - b.Z).Magnitude end
+-- Внутренности данжей стоят прямо в мире (в стороне от пути бура). Залететь туда без входа через ворота
+-- опасно: мобы бьют, а наш урон не проходит. Зона = круг вокруг внутреннего промпта Exit.
+local zoneCache, zoneAt = {}, 0
+local function dungeonZones()
+	if os.clock() - zoneAt < 5 then return zoneCache end
+	zoneAt, zoneCache = os.clock(), {}
+	for _, g in ipairs(workspace:GetChildren()) do
+		if g.Name:sub(1, #CONFIG.GateName) == CONFIG.GateName then
+			for _, d in ipairs(g:GetDescendants()) do
+				if d:IsA("ProximityPrompt") and d.ActionText == "Exit" then
+					local p = d.Parent:IsA("Attachment") and d.Parent.WorldPosition or pos(d.Parent)
+					if p then table.insert(zoneCache, p) end
+				end
+			end
+		end
 	end
+	return zoneCache
+end
+local function inZone(p)
+	for _, z in ipairs(dungeonZones()) do
+		if flat(z, p) < 260 then return true end
+	end
+	return false
 end
 
--- Авто-поездка бура: DrillService.StartDriving → в LocalDriverSeat → UpdateDriverThrottle(1) каждый тик.
--- Нужна, чтобы не срабатывал телепорт обратно к буру, когда мы далеко уходим от него.
--- Защиты: все вызовы в pcall; стоп при пустом топливе, низком здоровье, смерти и у ворот подземелья;
--- при любом выключении газ сбрасывается и мы выходим из водительского места.
+
+-- Вызов Knit-сервиса так же, как это делает игра (методы возвращают Promise). nil — ошибка.
+local function call(service, method, ...)
+	local args = table.pack(...)
+	local ok, a, b = pcall(function()
+		local s = Knit.GetService(service)
+		local p = s[method](s, table.unpack(args, 1, args.n))
+		if type(p) == "table" and p.expect then return p:expect() end
+		return p
+	end)
+	if not ok then return nil end
+	return a, b
+end
+
+-- Топливо: канистры/уголь (Category=Fuel: GasCan 50, PropaneTank 200, Ore_Coal 25) лежат в мире;
+-- поднятое топливо — инструмент в рюкзаке. Заправка: взять его в руки, стоя на FuelTouchPart (проверено: 2.7 → 28).
+local function fuelPct()
+	local d = getDrill()
+	local f, m = d and d:GetAttribute(CONFIG.FuelAttr), d and d:GetAttribute(CONFIG.MaxFuelAttr)
+	if not (f and m and m > 0) then return 100, f or 0 end
+	return f / m * 100, f
+end
+local function fuelTools()
+	local out = {}
+	for _, src in ipairs({ player:FindFirstChild("Backpack"), player.Character }) do
+		if src then
+			for _, t in ipairs(src:GetChildren()) do
+				if t:IsA("Tool") and t:GetAttribute("Category") == "Fuel" then table.insert(out, t) end
+			end
+		end
+	end
+	return out
+end
+
+-- Езда: DrillService.StartDriving → газ через LocalDriverSeat (клиент игры сам шлёт UpdateDriverThrottle).
 local driveStarted = false
 local function driveCall(name, ...)
 	local r = knit("DrillService", name)
@@ -1024,38 +1009,32 @@ local function driveCall(name, ...)
 	end)
 	return ok and res
 end
+local function isDriver()
+	local d = getDrill()
+	return d ~= nil and d:GetAttribute("DriverUserId") == player.UserId
+end
 local function driveStop(why)
-	if driveStarted then
+	if driveStarted or (State.Auto and isDriver()) then
 		local d = getDrill()
 		local seat = d and d:FindFirstChild("LocalDriverSeat", true)
 		if seat then pcall(function() seat.ThrottleFloat = 0; seat.Throttle = 0 end) end
 		driveCall("UpdateDriverThrottle", 0)
 		driveCall("StopDriving")
 		driveStarted = false
+		task.wait(0.3)
+		if why then status("[Drive] стоп: " .. why) end
 	end
-	if why then status("[Drive] стоп: " .. why) end
-	State.AutoDrive = false
 end
-local function driveStep()
+local function drive()
 	local drill = getDrill()
-	local c = player.Character
-	local hum = c and c:FindFirstChildOfClass("Humanoid")
-	if not (drill and hum) then return end
-	if hum.Health <= 0 then return driveStop("персонаж умер") end
-	if hum.Health < hum.MaxHealth * CONFIG.DriveMinHpPct / 100 then return driveStop("мало здоровья") end
-	local fuel = drill:GetAttribute(CONFIG.FuelAttr)
-	if fuel and fuel < CONFIG.DriveMinFuel then return driveStop("кончилось топливо") end
-	for _, g in ipairs(workspace:GetChildren()) do
-		if g:IsA("Model") and string.sub(g.Name, 1, #CONFIG.GateName) == CONFIG.GateName and not g.Name:find("Tutorial") then
-			local p1, p2 = pos(g), pos(drill)
-			if p1 and p2 and (p1 - p2).Magnitude <= CONFIG.GateStopDist then return driveStop("доехали до ворот " .. g.Name) end
-		end
-	end
-	if drill:GetAttribute("DriverUserId") ~= player.UserId then
-		-- сесть: подлететь к месту водителя и попросить сервер
+	if not drill then return end
+	if not isDriver() then
 		local seat = drill:FindFirstChild("LocalDriverSeat", true)
 		local r = hrp()
-		if seat and r then r.CFrame = seat.CFrame * CFrame.new(0, 3, 0) end
+		if seat and r then
+			r.AssemblyLinearVelocity = Vector3.zero
+			r.CFrame = seat.CFrame * CFrame.new(0, 3, 0)
+		end
 		task.wait(0.3)
 		if not driveCall("StartDriving") then
 			status("[Drive] StartDriving не принят — повтор")
@@ -1066,37 +1045,310 @@ local function driveStep()
 		status("[Drive] за рулём")
 		task.wait(0.5)
 	end
-	-- газ даём через само место водителя: клиент игры читает seat.ThrottleFloat и сам шлёт UpdateDriverThrottle
-	-- (если слать самим, игра перебивает наш газ своим нулём)
+	driveStarted = true
 	local seat = drill:FindFirstChild("LocalDriverSeat", true)
 	if seat then pcall(function() seat.ThrottleFloat = 1; seat.Throttle = 1 end) end
 end
 
-local function gateStep()
-	local drill = getDrill()
-	if not drill then return end
-	local gates = {}
-	for _, g in ipairs(workspace:GetChildren()) do
-		if g:IsA("Model") and string.sub(g.Name, 1, #CONFIG.GateName) == CONFIG.GateName then table.insert(gates, g) end
-	end
-	for _, g in ipairs(gates) do
-		local p1, p2 = pos(g), pos(drill)
-		if p1 and p2 and (p1 - p2).Magnitude <= CONFIG.GateStopDist then
-			VIM:SendKeyEvent(false, Enum.KeyCode.W, false, game) -- отпустить газ
-			firePrompt(g, CONFIG.GatePromptKey)
+local refuelNext = 0
+local function refuel()
+	local d = getDrill()
+	local part = d and d:FindFirstChild("FuelTouchPart")
+	if not part then return false end
+	driveStop()
+	local _, before = fuelPct()
+	local eq = knit("ToolService", "EquipTool")
+	-- сначала мелкое топливо, чтобы не сжечь баллон на 200 в почти полный бак
+	local tools = fuelTools()
+	table.sort(tools, function(a, b) return (a:GetAttribute("Fuel") or 0) < (b:GetAttribute("Fuel") or 0) end)
+	Moving = true -- ноклип: стоим прямо внутри топливного отсека, чтобы предмет в руке его касался
+	for _, t in ipairs(tools) do
+		if fuelPct() >= 95 then break end
+		local r = hrp()
+		if not r then break end
+		local _, was = fuelPct()
+		if t.Parent ~= player.Character and eq then pcall(function() eq:InvokeServer(t) end) end
+		for _ = 1, 12 do
+			r.AssemblyLinearVelocity = Vector3.zero
+			r.CFrame = CFrame.new(part.Position + Vector3.new(0, 1, 0))
+			touch(part)
+			task.wait(0.2)
+			local _, now = fuelPct()
+			if now > was + 1 or not t.Parent then break end
 		end
 	end
+	Moving = false
+	local _, after = fuelPct()
+	status(("[Fuel] заправка: %.0f → %.0f"):format(before, after))
+	if after > before + 1 then Stats.refuels += 1; return true end
+	refuelNext = os.clock() + 5 -- не получилось — не долбим каждый тик
+	return false
 end
 
-local function burnStep()
-	for _, d in ipairs(workspace:GetDescendants()) do
-		if d:IsA("Model") and hasKey(d.Name, {CONFIG.CorpseKey}) then
-			local v = d:GetAttribute("Value")
-			if v and v <= CONFIG.CorpseMaxValue and not d:GetAttribute("Bounty") then
-				firePrompt(d, CONFIG.BurnPromptKey)
-			end
+-- Апгрейды бура: карточки DrillService.FetchOptions() → UpgradeDrill(имя, версия). Только Type="Coins".
+local upgradeNext = 0
+local function upgradeStep(force)
+	if not force and os.clock() < upgradeNext then return false end
+	upgradeNext = os.clock() + 6
+	local coins = call("CurrencyService", "GetCurrency")
+	if type(coins) ~= "number" then return false end
+	local opts, ver = call("DrillService", "FetchOptions")
+	if type(opts) ~= "table" or type(ver) ~= "number" then return false end
+	local best, bestRank
+	for _, o in ipairs(opts) do
+		if type(o) == "table" and o.Type == "Coins" and type(o.Cost) == "number" and o.Cost > 0 and o.Cost <= coins then
+			local rank = table.find(CONFIG.UpgradePriority, o.UpgradeName) or (#CONFIG.UpgradePriority + 1)
+			if not bestRank or rank < bestRank then best, bestRank = o, rank end
 		end
 	end
+	if not best then return false end
+	local res = call("DrillService", "UpgradeDrill", best.UpgradeName, ver)
+	status(("[Upgrade] %s (%s) за %d: %s"):format(tostring(best.UpgradeName), tostring(best.Rarity), best.Cost, res and "куплено" or "отказ"))
+	if res then Stats.upgrades += 1; upgradeNext = os.clock() + 1 end
+	return res and true or false
+end
+
+-- Катсцены: делаем то же, что кнопка Skip (CutSceneController → VoteSkip / VoteSkipPrivate)
+local function skipCutscene()
+	if workspace:GetAttribute("InCutScene") ~= true then return end
+	local ok, cc = pcall(function() return Knit.GetController("CutSceneController") end)
+	if not (ok and cc and cc.CurrentCutScene) then return end
+	local ctx = cc.CurrentCutSceneContext
+	if ctx and ctx.DisableSkip == true then return end
+	if ctx and ctx.Private and ctx.RuntimeId ~= nil then
+		call("CutSceneService", "VoteSkipPrivate", ctx.RuntimeId, cc.CurrentCutScene)
+	else
+		call("CutSceneService", "VoteSkip", cc.CurrentCutScene, ctx and ctx.RuntimeId)
+	end
+	status("[Cutscene] пропуск: " .. tostring(cc.CurrentCutScene))
+	task.wait(2)
+end
+
+----------------------------------------------------------------- KILL AURA / DUNGEON
+-- Бьём монстров мечом, паря над макушкой монстра и глядя на него.
+local RunService = game:GetService("RunService")
+local killSkip = setmetatable({}, { __mode = "k" })
+local Killing = false
+local lastSurface
+
+-- живые враги в радиусе от center (по умолчанию — от персонажа)
+local function enemies(radius, center)
+	local out, folder, r = {}, workspace:FindFirstChild("Npc"), hrp()
+	center = center or (r and r.Position)
+	if not (folder and center) then return out end
+	for _, m in ipairs(folder:GetChildren()) do
+		local h = m:IsA("Model") and m:FindFirstChild("Humanoid")
+		-- мимики (Health ~1e11) — сундуки-монстры, их не бьём
+		if h and h.Health > 0 and h.MaxHealth < 1e6 and m:GetAttribute("NpcFaction") == "Enemy"
+			and (killSkip[m] or 0) < os.clock() then
+			local p = pos(m)
+			if p and (radius <= 0 or (p - center).Magnitude <= radius) then table.insert(out, m) end
+		end
+	end
+	table.sort(out, function(a, b) return dist(a) < dist(b) end)
+	return out
+end
+
+-- Позиция для удара (смещение от центра монстра). Опытным путём: над монстром не выше макушки+2 и
+-- сбоку в пределах ~6 st работает; точное зависит от монстра и стен — поэтому перебираем по кругу,
+-- пока не пойдёт урон, и запоминаем рабочий вариант.
+-- Смещения считаются от размера моба (h = половина габарита): у Goblin Brute (6.5×10×3.3)
+-- старые фиксированные точки оказывались внутри модели, и урон не проходил.
+local killCands = {
+	function(h) return Vector3.new(0, h.Y + 1, 0) end,           -- над макушкой (на 1 выше; +4 уже не бьёт)
+	function(h) return Vector3.new(h.X + 2.5, h.Y * 0.3, 0) end,  -- сбоку, на уровне плеч
+	function(h) return Vector3.new(0, h.Y * 0.3, h.Z + 2.5) end,
+	function(h) return Vector3.new(-(h.X + 2.5), h.Y * 0.3, 0) end,
+	function(h) return Vector3.new(h.X + 1, 0, 0) end,            -- вплотную (бьёт всегда, но и моб бьёт в ответ)
+}
+local killIdx = 1
+local function standUnder(m)
+	local ok, cf, size = pcall(m.GetBoundingBox, m)
+	if not ok then local p = pos(m); return p and p + Vector3.new(0, 3, 0), p, p end
+	local mid = cf.Position
+	local base = Vector3.new(mid.X, mid.Y - size.Y / 2, mid.Z)
+	return mid + killCands[killIdx](size / 2), base, mid
+end
+
+local function killOne(m)
+	local h = m:FindFirstChild("Humanoid")
+	local tool = equipWeapon()
+	if not (h and tool) then killSkip[m] = os.clock() + 30; return end
+	local stand, base, mid = standUnder(m)
+	if not stand then return end
+	if not moveTo(m, function() return State.KillAura or State.Auto end, stand) then return end
+	Moving = true -- ноклип на время удара
+	local t0, lastHp, lastHit = os.clock(), h.Health, os.clock()
+	local misses, myHp0, nodmg = 0, hpPct(), false
+	local toolCheck = os.clock()
+	while Running and (State.KillAura or State.Auto) and m.Parent and h.Health > 0 do
+		local r = hrp()
+		stand, base, mid = standUnder(m)
+		if not (r and stand) then break end
+		lastSurface = base
+		r.AssemblyLinearVelocity = Vector3.zero
+		r.CFrame = CFrame.lookAt(stand, mid)
+		if os.clock() - toolCheck > 1 then -- меч «выпал» из ActiveTool — удары идут впустую
+			toolCheck = os.clock()
+			local at = gameTool()
+			if not holds(at, tool) then tool = equipWeapon() or tool end
+		end
+		swing(tool)
+		if h.Health < lastHp - 0.01 then lastHp, lastHit = h.Health, os.clock() end
+		if os.clock() - lastHit > 1.2 then -- урона нет: следующая позиция из списка
+			killIdx = killIdx % #killCands + 1
+			lastHit, misses = os.clock(), misses + 1
+			-- два круга без урона, или нас бьёт кто-то другой, пока цель неуязвима (моб за стеной) — бросаем
+			-- бросаем: два круга без урона, или цель неуязвима, а бьёт нас кто-то другой (он ближе цели)
+			local other = enemies(30)[1]
+			if misses > #killCands * 2 or (misses >= 2 and hpPct() < myHp0 - 5 and other and other ~= m) then nodmg = true; break end
+		end
+		if CONFIG.KillTimeout > 0 and os.clock() - t0 > CONFIG.KillTimeout then break end
+		if hpPct() < CONFIG.GuardHpPct then break end -- мало HP: бросаем бой, дальше сработает укрытие
+		RunService.Heartbeat:Wait()
+	end
+	Moving = false
+	local dead = not m.Parent or h.Health <= 0
+	if dead then Stats.kills += 1 elseif nodmg then killSkip[m] = os.clock() + 20 elseif hpPct() >= CONFIG.GuardHpPct then killSkip[m] = os.clock() + 30 end
+	local at = gameTool()
+	status(("[Kill] %s: %s за %.1fс%s"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0,
+		dead and "" or (" (поз.%d, меч в руке: %s)"):format(killIdx, tostring(holds(at, tool)))))
+end
+
+-- true — были монстры (шаг занят), false — убивать некого
+local function killStep(radius, back)
+	if Killing then return true end
+	if #enemies(radius) == 0 then return false end
+	Killing, Selling = true, true
+	local r = hrp()
+	local origin = r and r.CFrame
+	pcall(function()
+		while Running and (State.KillAura or State.Auto) do
+			local list = enemies(radius)
+			if #list == 0 or hpPct() < CONFIG.GuardHpPct then break end
+			killOne(list[1])
+		end
+	end)
+	Moving, Killing, Selling = false, false, false
+	r = hrp()
+	-- Aura возвращает на место (идёт фарм), Dungeon — поднимает на поверхность у последнего монстра
+	if r then
+		if back and origin then r.CFrame = origin
+		elseif lastSurface then r.CFrame = CFrame.new(lastSurface + Vector3.new(0, 4, 0)) end
+		r.AssemblyLinearVelocity = Vector3.zero
+	end
+	return true
+end
+
+----------------------------------------------------------------- GUARD
+-- Лог урона: откуда прилетает (яд, токсичный туман или мобы рядом) — по нему настраиваем защиту
+local function poisoned()
+	local c = player.Character
+	return c ~= nil and (c:GetAttribute("IsPoisoned") == true or c:GetAttribute("IsToxicFogPoisoned") == true)
+end
+local dmgHooked = setmetatable({}, { __mode = "k" })
+task.spawn(function()
+	while Running do
+		local h = hum()
+		if h and not dmgHooked[h] then
+			dmgHooked[h] = true
+			local last = h.Health
+			table.insert(Connections, h.HealthChanged:Connect(function(v)
+				if v < last - 1 then
+					local near = {}
+					for _, m in ipairs(enemies(40)) do table.insert(near, m.Name .. "@" .. math.floor(dist(m))) end
+					local c = player.Character
+					status(("[DMG] -%.0f → %.0f%s%s %s"):format(last - v, v,
+						c and c:GetAttribute("IsPoisoned") and " ЯД" or "", c and c:GetAttribute("IsToxicFogPoisoned") and " ТУМАН" or "",
+						#near > 0 and table.concat(near, ",") or "мобов рядом нет"))
+				end
+				last = v
+			end))
+		end
+		task.wait(1)
+	end
+end)
+
+-- Все живые враги (включая пропущенных) — для выбора безопасного места
+local function threats(center, radius)
+	local out, folder = {}, workspace:FindFirstChild("Npc")
+	if not folder then return out end
+	for _, m in ipairs(folder:GetChildren()) do
+		local h = m:IsA("Model") and m:FindFirstChildOfClass("Humanoid")
+		local p = h and h.Health > 0 and m:GetAttribute("NpcFaction") == "Enemy" and pos(m)
+		if p and (p - center).Magnitude <= radius then table.insert(out, p) end
+	end
+	return out
+end
+-- Безопасная точка: 8 направлений вокруг бура на 250 st — та, что дальше всех от мобов. Стоять на месте
+-- (даже под землёй) нельзя: дальнобойные (Crazy Miner, −17) достают и там. Уходим из зоны агрессии.
+local function safeSpot(avoid)
+	local d = getDrill()
+	local center = d and pos(d) or (hrp() and hrp().Position)
+	if not center then return end
+	local danger = threats(center, 600)
+	local best, bestScore
+	for k = 0, 7 do
+		local a = k * math.pi / 4
+		local p = center + Vector3.new(math.cos(a), 0, math.sin(a)) * 250
+		local score = math.huge
+		for _, e in ipairs(danger) do score = math.min(score, flat(e, p)) end
+		if avoid and flat(avoid, p) < 100 then score = score - 1000 end -- только что били тут
+		if not bestScore or score > bestScore then best, bestScore = p, score end
+	end
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { player.Character, workspace:FindFirstChild("Npc"), d }
+	local hit = workspace:Raycast(best + Vector3.new(0, 60, 0), Vector3.new(0, -200, 0), params)
+	return CFrame.new(best.X, (hit and hit.Position.Y or center.Y) - 16, best.Z) -- под полом
+end
+
+-- Мало HP: слезаем с бура, улетаем в безопасную точку под землёй и ждём, пока HP восстановится
+local Hiding = false
+local function hide(why)
+	local r = hrp()
+	if not r or Hiding then return end
+	Hiding = true
+	driveStop()
+	Stats.hides += 1
+	status(("[Guard] HP %.0f%% — ухожу в укрытие (%s)%s"):format(hpPct(), why, poisoned() and " [яд]" or ""))
+	local spot = safeSpot()
+	Moving = true
+	pcall(function()
+		if not spot then return end
+		local t0, lastHp, lastCheck = os.clock(), hpPct(), os.clock()
+		while Running and (State.Auto or State.KillAura) and alive() and hpPct() < CONFIG.SafeHpPct and os.clock() - t0 < 240 do
+			r = hrp()
+			if not r then break end
+			r.Anchored = true
+			r.AssemblyLinearVelocity = Vector3.zero
+			r.CFrame = spot
+			if os.clock() - lastCheck > 2 then
+				if hpPct() < lastHp - 2 then
+					spot = safeSpot(spot.Position) or spot
+					status("[Guard] достают и тут — меняю укрытие" .. (poisoned() and " (яд)" or ""))
+				end
+				lastHp, lastCheck = hpPct(), os.clock()
+			end
+			task.wait(0.25)
+		end
+	end)
+	r = hrp()
+	if r then r.Anchored = false; r.CFrame = r.CFrame + Vector3.new(0, 19, 0) end -- вылезти на поверхность
+	Moving, Hiding = false, false
+	status(("[Guard] HP %.0f%% — выхожу из укрытия"):format(hpPct()))
+end
+
+-- Перед сундуком/лутом: убить монстров рядом с целью (если HP позволяет). false — не вышло, цель пропускаем.
+local function clearAround(p, radius)
+	for _ = 1, 8 do
+		local list = enemies(radius, p)
+		if #list == 0 then return true end
+		if hpPct() < CONFIG.GuardHpPct + 15 then return false end
+		driveStop()
+		killOne(list[1])
+	end
+	return #enemies(radius, p) == 0
 end
 
 -- Сундуки: ищем активные промпты сундуков/ящиков ("Interact", "Open Chest"...).
@@ -1121,9 +1373,10 @@ local function chestInfo(prompt)
 	return isChest
 end
 local chestNextScan = 0
-local function chestStep()
-	if os.clock() < chestNextScan then return end
-	chestNextScan = os.clock() + 2
+-- Ближайший неоткрытый сундук в radius от center: false — сундуков нет, true — занимались сундуком
+local function chestStep(center, radius)
+	if os.clock() < chestNextScan then return false end
+	chestNextScan = os.clock() + 1.5
 	-- Enabled не проверяем: игра часто включает промпт сундука, только когда игрок рядом.
 	-- Текст промпта тоже не важен — достаточно, что он висит на сундуке.
 	local list = {}
@@ -1132,19 +1385,26 @@ local function chestStep()
 			table.insert(list, d)
 		end
 	end
-	local best, bd = nil, CONFIG.ChestRadius > 0 and CONFIG.ChestRadius or math.huge
+	local best, bd
 	for _, pr in ipairs(list) do
-		local d = dist(pr.Parent)
-		if d < bd then best, bd = pr, d end
+		local p = pos(pr.Parent)
+		if p and (p - center).Magnitude <= radius and (dungeonActive or not inZone(p)) then
+			local d = dist(pr.Parent)
+			if not bd or d < bd then best, bd = pr, d end
+		end
 	end
 	if not best then return false end
+	chestNextScan = 0 -- после сундука сразу ищем следующий
 	chestTried[best] = os.clock() + 120 -- не открылся — вернёмся не раньше чем через 2 мин
 	local chest = chestNode(best) or best.Parent
+	driveStop()
+	if not clearAround(pos(best.Parent), 25) then return true end
 	if moveTo(best.Parent, collecting) then
 		task.wait(0.3) -- дать игре включить промпт
 		local wasOn = best.Enabled
 		local function opened() return changed("chest", chest) or not best.Parent or (wasOn and not best.Enabled) end
 		local ok = replay("chest", chest) or usePrompt(best, opened)
+		if ok then Stats.chests += 1 end
 		status((ok and "[Chest] открыт: " or "[Chest] не открылся (откройте один руками — скрипт выучит): ")
 			.. chest:GetFullName() .. " | " .. best.ActionText)
 		task.wait(1.2)
@@ -1171,166 +1431,307 @@ local function highlightStep()
 	end
 end
 
------------------------------------------------------------------ KILL AURA / DUNGEON
--- Бьём монстров мечом, паря над макушкой монстра и глядя на него.
-local RunService = game:GetService("RunService")
-local killSkip = setmetatable({}, { __mode = "k" })
-local Killing = false
-local lastSurface
-
-local function enemies(radius)
-	local out, folder, r = {}, workspace:FindFirstChild("Npc"), hrp()
-	if not (folder and r) then return out end
-	for _, m in ipairs(folder:GetChildren()) do
-		local h = m:IsA("Model") and m:FindFirstChild("Humanoid")
-		-- мимики (Health ~1e11) — сундуки-монстры, их не бьём
-		if h and h.Health > 0 and h.MaxHealth < 1e6 and m:GetAttribute("NpcFaction") == "Enemy"
-			and (killSkip[m] or 0) < os.clock() then
-			local p = pos(m)
-			if p and (radius <= 0 or (p - r.Position).Magnitude <= radius) then table.insert(out, m) end
+----------------------------------------------------------------- AUTO FARM
+-- Лут: по одному предмету за шаг (между шагами заново проверяем HP/топливо/монстров)
+local function lootStep(center, radius, fuelOnly)
+	local full = bagFull()
+	local best, bd
+	for _, it in ipairs(groundItems()) do
+		local p = pos(it)
+		if p and (p - center).Magnitude <= radius and (skipUntil[it] or 0) < os.clock() and (dungeonActive or not inZone(p)) then
+			local name = it:GetAttribute("DisplayName") or it.Name
+			local isFuel = it:GetAttribute("Category") == "Fuel"
+			local want
+			if it:GetAttribute("ItemDatabaseId") == "Money_Sack" then want = not fuelOnly and isMySack(it)
+			elseif fuelOnly then want = isFuel and not full
+			else want = not full and (isFuel or ((it:GetAttribute("Value") or 0) >= CONFIG.ItemsMinValue
+				and not hasKey(name, CONFIG.IgnoredItems)))
+			end
+			if want then
+				local d = dist(it)
+				if not bd or d < bd then best, bd = it, d end
+			end
 		end
 	end
-	table.sort(out, function(a, b) return dist(a) < dist(b) end)
-	return out
-end
-
--- Позиция для удара (смещение от центра монстра). Опытным путём: над монстром не выше макушки+2 и
--- сбоку в пределах ~6 st работает; точное зависит от монстра и стен — поэтому перебираем по кругу,
--- пока не пойдёт урон, и запоминаем рабочий вариант.
-local killCands = {
-	Vector3.new(0, 4, 0),  -- над головой (моб снизу не достаёт)
-	Vector3.new(6, 3, 0),  -- сбоку, подальше
-	Vector3.new(0, 3, 6),
-	Vector3.new(3, 0, 0),  -- вплотную на уровне груди (всегда работает, но моб бьёт в ответ)
-}
-local killIdx = 1
-local function standUnder(m)
-	local ok, cf, size = pcall(m.GetBoundingBox, m)
-	if not ok then local p = pos(m); return p and p + Vector3.new(0, 3, 0), p, p end
-	local mid = cf.Position
-	local base = Vector3.new(mid.X, mid.Y - size.Y / 2, mid.Z)
-	return mid + killCands[killIdx], base, mid
-end
-
-local function killOne(m)
-	local h = m:FindFirstChild("Humanoid")
-	local tool = equipWeapon()
-	if not (h and tool) then killSkip[m] = os.clock() + 30; return end
-	local stand, base, mid = standUnder(m)
-	if not stand then return end
-	if not moveTo(m, function() return State.KillAura or State.Dungeon end, stand) then return end
-	Moving = true -- ноклип на время удара
-	local t0, lastHp, lastHit = os.clock(), h.Health, os.clock()
-	local misses = 0
-	while Running and (State.KillAura or State.Dungeon) and m.Parent and h.Health > 0 do
-		local r = hrp()
-		stand, base, mid = standUnder(m)
-		if not (r and stand) then break end
-		lastSurface = base
-		r.AssemblyLinearVelocity = Vector3.zero
-		r.CFrame = CFrame.lookAt(stand, mid)
-		swing(tool)
-		if h.Health < lastHp - 0.01 then lastHp, lastHit = h.Health, os.clock() end
-		if os.clock() - lastHit > 1.2 then -- урона нет: следующая позиция из списка
-			killIdx = killIdx % #killCands + 1
-			lastHit, misses = os.clock(), misses + 1
-			if misses > #killCands * 2 then break end -- два круга без урона — пропускаем монстра
-		end
-		if CONFIG.KillTimeout > 0 and os.clock() - t0 > CONFIG.KillTimeout then break end
-		RunService.Heartbeat:Wait()
+	if not best then return false end
+	driveStop()
+	local name = best:GetAttribute("DisplayName") or best.Name
+	if not clearAround(pos(best), 25) then skipUntil[best] = os.clock() + 30; return true end
+	if best:GetAttribute("ItemDatabaseId") == "Money_Sack" then
+		if not grabSack(best) then skipUntil[best] = os.clock() + 30 end
+		return true
 	end
-	Moving = false
-	local dead = not m.Parent or h.Health <= 0
-	if not dead then killSkip[m] = os.clock() + 30 end
-	status(("[Kill] %s: %s за %.1fс"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0))
-end
-
--- true — были монстры (шаг занят), false — убивать некого
-local function killStep(radius, back)
-	if Killing then return true end
-	if #enemies(radius) == 0 then return false end
-	Killing, Selling = true, true
-	local r = hrp()
-	local origin = r and r.CFrame
-	pcall(function()
-		while Running and (State.KillAura or State.Dungeon) do
-			local list = enemies(radius)
-			if #list == 0 then break end
-			killOne(list[1])
+	if moveTo(best, collecting) then
+		task.wait(0.15)
+		if pickupItem(best) then
+			Stats.items += 1
+			status("[Loot] подобрал: " .. name)
+			task.wait(CONFIG.PickupDelay)
+		else
+			skipUntil[best] = os.clock() + 60
+			status("[Loot] не поднялся: " .. name)
 		end
-	end)
-	Moving, Killing, Selling = false, false, false
-	r = hrp()
-	-- Aura возвращает на место (идёт фарм), Dungeon — поднимает на поверхность у последнего монстра
-	if r then
-		if back and origin then r.CFrame = origin
-		elseif lastSurface then r.CFrame = CFrame.new(lastSurface + Vector3.new(0, 4, 0)) end
-		r.AssemblyLinearVelocity = Vector3.zero
+	else
+		skipUntil[best] = os.clock() + 10
 	end
 	return true
 end
 
--- Вход в подземелье: летим к воротам DungeonGate_* и жмём их промпт.
--- Вызывается ПЕРЕД зачисткой: пока рядом (в DungeonRadius) есть ворота, мы ещё снаружи — входим.
-local gateNext, gateSkip = 0, setmetatable({}, { __mode = "k" })
--- у каждых ворот два промпта: "Enter" (вход, у ворот) и "Exit" (выход из данжа, внутри) — нужен только Enter
+-- Продажа: сумка заполнена и рядом с буром есть стол продажи
+local sellNext = 0
+local function sellStep(center, force)
+	local n, cap = bagUsage()
+	if not force and not (n and cap and cap > 0 and n / cap * 100 >= CONFIG.SellAtPct) then return false end
+	if not force and os.clock() < sellNext then return false end
+	sellNext = os.clock() + 4
+	local best, bd
+	for _, sp in ipairs(findSellParts()) do
+		local d = flat(sp.Position, center)
+		if (force or d <= CONFIG.WorkRadius) and (not bd or d < bd) then best, bd = sp, d end
+	end
+	if not best then return false end
+	Phase = "Продажа"
+	driveStop()
+	if not clearAround(best.Position, 30) then return false end
+	tp(best)
+	Selling = true
+	local ok, err = pcall(sellAll, best)
+	Selling = false
+	if ok then Stats.sells += 1 else status("[Sell] ошибка: " .. tostring(err)) end
+	sellNext = os.clock() + 20
+	return true
+end
+
+-- Подземелья. Модели ворот перезагружаются (streaming), поэтому «пройденные» помним по позиции.
+-- пройденные ворота переживают перезапуск скрипта (в пределах одного забега)
+local gateDone = getgenv and (getgenv().DF_GateDone or {}) or {}
+if getgenv then getgenv().DF_GateDone = gateDone end
+local gateTries = {}
+local function gateKey(g)
+	local p = pos(g)
+	return p and (math.floor(p.X / 20) .. ":" .. math.floor(p.Z / 20))
+end
+local function gateNear(center)
+	for _, g in ipairs(workspace:GetChildren()) do
+		if g:IsA("Model") and g.Name:sub(1, #CONFIG.GateName) == CONFIG.GateName and not g.Name:find("Tutorial") then
+			local p, k = pos(g), gateKey(g)
+			if p and k and not gateDone[k] and flat(p, center) <= CONFIG.GateStopDist then return g, k end
+		end
+	end
+end
+-- у каждых ворот два промпта: "Enter" (вход, у ворот) и "Exit" (выход, внутри данжа)
 local function enterPrompt(g)
 	for _, d in ipairs(g:GetDescendants()) do
 		if d:IsA("ProximityPrompt") and d.ActionText == CONFIG.GatePromptKey then return d end
 	end
 end
-local function enterGate()
-	if os.clock() < gateNext or bagFull() then return false end
-	gateNext = os.clock() + 8
-	local best, bd
-	for _, g in ipairs(workspace:GetChildren()) do
-		if g:IsA("Model") and string.sub(g.Name, 1, #CONFIG.GateName) == CONFIG.GateName and not g.Name:find("Tutorial")
-			and (gateSkip[g] or 0) < os.clock() then
-			local d = dist(g)
-			if d <= CONFIG.GateRadius and (not bd or d < bd) then best, bd = g, d end
-		end
-	end
-	if not best then return false end
-	local gp = pos(best)
-	if bd > 40 and not moveTo(best, function() return State.Dungeon end) then return true end
+local function promptPos(pr)
+	return pr.Parent:IsA("Attachment") and pr.Parent.WorldPosition or pos(pr.Parent)
+end
+local dungeonIdle, dungeonStart = 0, 0
+local function enterGate(g, key)
+	gateTries[key] = (gateTries[key] or 0) + 1
+	if gateTries[key] >= 3 then gateDone[key] = true end
+	driveStop()
+	local gp = pos(g)
+	if not clearAround(gp, 40) then gateDone[key] = true; return end
+	if dist(g) > 40 and not moveTo(g, collecting) then return end
 	pcall(function() player:RequestStreamAroundAsync(gp, 5) end)
-	-- ворота могли не прогрузиться: ждём промпт входа
 	local pr
 	for _ = 1, 20 do
-		pr = enterPrompt(best)
+		pr = enterPrompt(g)
 		if pr then break end
 		task.wait(0.25)
 	end
 	if not pr then
-		gateSkip[best] = os.clock() + 120
-		status("[Dungeon] у ворот нет промпта Enter: " .. best.Name)
-		return true
+		gateDone[key] = true
+		status("[Dungeon] у ворот нет промпта Enter: " .. g.Name)
+		return
 	end
 	local r = hrp()
-	local target = pr.Parent:IsA("Attachment") and pr.Parent.WorldPosition or pos(pr.Parent)
+	local target = promptPos(pr)
 	if r and target then r.CFrame = CFrame.new(target + Vector3.new(0, 3, 4)) end
 	task.wait(0.4)
-	status("[Dungeon] вход: " .. best.Name .. " (" .. tostring(pr.ObjectText) .. ")")
+	status("[Dungeon] вход: " .. g.Name)
 	local from = r and r.Position
-	local function teleported() local c = hrp(); return c and from and (c.Position - from).Magnitude > 100 end
-	local ok = usePrompt(pr, teleported)
-	if not ok then -- запасной путь: Interact самой игры
+	local function entered()
+		local c = hrp()
+		return c and from and (c.Position - from).Magnitude > 100
+	end
+	if not usePrompt(pr, entered) then
 		local inter = knit("InteractionService", "Interact")
 		if inter then pcall(function() inter:InvokeServer(pr.Parent.Parent) end) end
 	end
-	for _ = 1, 20 do if teleported() then break end task.wait(0.25) end
-	status(teleported() and "[Dungeon] вошёл" or "[Dungeon] вход не сработал: " .. best.Name)
-	gateSkip[best] = os.clock() + 60 -- не входим в те же ворота сразу снова
-	return true
+	for _ = 1, 20 do if entered() then break end task.wait(0.25) end
+	if entered() then
+		dungeonActive = true
+		table.clear(killSkip) -- снаружи/внутри урон считается по-разному: старые пропуски не в счёт
+		gateDone[key] = true
+		Stats.dungeons += 1
+		dungeonStart, dungeonIdle = os.clock(), os.clock()
+		status("[Dungeon] вошёл: " .. g.Name)
+	else
+		status("[Dungeon] вход не сработал: " .. g.Name)
+	end
 end
 
--- Авто-данж: вход в ворота → все монстры → сундуки и лут
-local function dungeonStep()
-	if enterGate() then return end
-	if killStep(CONFIG.DungeonRadius, false) then return end
-	if chestStep() ~= false then return end -- nil = ждём следующий скан, true = занимались сундуком
-	collectStep(false)
+local function exitDungeon(why)
+	status("[Dungeon] выход: " .. why)
+	local r = hrp()
+	local best, bd
+	for _, d in ipairs(workspace:GetDescendants()) do
+		-- только выход из данжа (у SpiderPit тоже есть Exit)
+		if d:IsA("ProximityPrompt") and d.ActionText == "Exit" and d:GetFullName():find(".Dungeon_", 1, true) then
+			local p = promptPos(d)
+			local dd = p and r and (p - r.Position).Magnitude
+			if dd and (not bd or dd < bd) then best, bd = d, dd end
+		end
+	end
+	if not best then status("[Dungeon] промпт Exit не найден"); dungeonActive = false; return false end
+	moveTo(best.Parent, nil, promptPos(best) + Vector3.new(0, 3, 3))
+	task.wait(0.3)
+	local from = hrp() and hrp().Position
+	local function out() local c = hrp(); return c and from and (c.Position - from).Magnitude > 100 end
+	usePrompt(best, out)
+	for _ = 1, 20 do if out() then break end task.wait(0.25) end
+	if not out() then
+		local inter = knit("InteractionService", "Interact")
+		if inter then pcall(function() inter:InvokeServer(best.Parent.Parent) end) end
+		task.wait(1.5)
+	end
+	if out() then dungeonActive = false; table.clear(killSkip) end
+	return not dungeonActive
 end
+
+-- Арена босса: дверь ArenaGate открывается (DoorOpen=true) — заходим внутрь, дальше обычная зачистка
+local arenaVisited = setmetatable({}, { __mode = "k" })
+local arenaNext = 0
+local function arenaStep()
+	if os.clock() < arenaNext then return false end
+	arenaNext = os.clock() + 2
+	local gates = {}
+	for _, g in ipairs(workspace:GetChildren()) do
+		if g.Name:sub(1, #CONFIG.GateName) == CONFIG.GateName then table.insert(gates, g) end
+	end
+	for _, g in ipairs(gates) do for _, d in ipairs(g:GetDescendants()) do
+		if d.Name == "ArenaGate" and d:GetAttribute("DoorOpen") == true then
+			local arena = d.Parent
+			local p = arena and pos(arena)
+			if p and not arenaVisited[arena] then
+				arenaVisited[arena] = true
+				status("[Dungeon] арена открыта — захожу")
+				moveTo(arena, collecting, p + Vector3.new(0, 4, 0))
+				task.wait(1.5)
+				return true
+			end
+		end
+	end end
+	return false
+end
+
+local function dungeonRun()
+	Phase = "Подземелье"
+	-- в данже мобы преследуют и в укрытии: при опасности сразу выходим
+	if hpPct() < 60 and #enemies(60) > 0 then exitDungeon("мало HP"); return end
+	if killStep(CONFIG.DungeonRadius, false) then dungeonIdle = os.clock(); return end
+	local r = hrp()
+	if not r then return end
+	if chestStep(r.Position, CONFIG.DungeonRadius) then dungeonIdle = os.clock(); return end
+	if lootStep(r.Position, CONFIG.DungeonRadius) then dungeonIdle = os.clock(); return end
+	if arenaStep() then dungeonIdle = os.clock(); return end
+	if os.clock() - dungeonIdle > 10 or os.clock() - dungeonStart > 600 then exitDungeon("зачищено") end
+end
+
+-- Финальная стена слоя («босс»-стена): при ударе идёт волна врагов
+local wallReady = setmetatable({}, { __mode = "k" })
+local function finalWallAhead(dp)
+	local f = workspace:FindFirstChild("RockWalls")
+	if not f then return end
+	for _, w in ipairs(f:GetChildren()) do
+		local t = w:GetAttribute("Type")
+		if w:IsA("BasePart") and t and t:find("Final") and (w:GetAttribute("Health") or 0) > 0
+			and flat(w.Position, dp) <= CONFIG.WallStopDist then
+			return w
+		end
+	end
+end
+
+-- Мозг авто-фарма: каждый тик выбираем самое важное дело
+local function autoStep()
+	if not alive() then Phase = "Ждём возрождения"; return end
+	if workspace:GetAttribute("InCutScene") == true then Phase = "Катсцена"; return end
+	if hpPct() < CONFIG.GuardHpPct then
+		if inDungeon() then exitDungeon("мало HP") end
+		Phase = "Укрытие (мало HP)"
+		hide("мало HP")
+		return
+	end
+	if inDungeon() then return dungeonRun() end
+
+	local drill = getDrill()
+	local me = hrp()
+	if me and inZone(me.Position) and drill then
+		status("[Auto] оказался в зоне данжа без входа — назад к буру")
+		tpToDrill(drill)
+		return
+	end
+	local dp = drill and pos(drill)
+	if not dp then Phase = "Бур не найден"; return end
+	local fp, fuel = fuelPct()
+
+	if fp < CONFIG.FuelTargetPct and #fuelTools() > 0 and os.clock() > refuelNext then Phase = "Заправка"; refuel(); return end
+	if sellStep(dp) then return end
+	if upgradeStep() then Phase = "Прокачка бура"; return end
+
+	local g, key = gateNear(dp)
+	if g then
+		if hpPct() < CONFIG.SafeHpPct then driveStop(); Phase = "Жду HP перед подземельем"; return end
+		Phase = "Вход в подземелье"; enterGate(g, key); return
+	end
+
+	-- монстры у бура: пока они рядом, они бьют и водителя — убиваем, если HP позволяет
+	local near = enemies(45, dp)
+	if #near > 0 then
+		-- сидеть за рулём под ударами нельзя: либо бой (HP хватает), либо укрытие
+		if hpPct() < CONFIG.GuardHpPct + 15 then Phase = "Укрытие (мобы у бура)"; hide("мобы у бура"); return end
+		Phase = "Бой у бура"
+		driveStop()
+		killOne(near[1])
+		return
+	end
+
+	if chestStep(dp, CONFIG.WorkRadius) then Phase = "Сундуки"; return end
+	if lootStep(dp, CONFIG.WorkRadius) then Phase = "Сбор лута"; return end
+	if fp < 20 and #fuelTools() == 0 then
+		if lootStep(dp, CONFIG.FuelSearchRadius, true) then Phase = "Ищу топливо"; return end
+		-- канистр нет — копаем уголь (Ore_Coal = топливо 25) киркой обычным фармом руды
+		local r = hrp()
+		local hasCoal = false
+		for _, n in ipairs(oreNodes()) do
+			if hasKey(n:GetAttribute("SessionOreType") or "", { "Coal" }) and r and (n.Position - dp).Magnitude <= CONFIG.WorkRadius then hasCoal = true; break end
+		end
+		if hasCoal then
+			Phase = "Копаю уголь на топливо"
+			driveStop()
+			local names, radius = CONFIG.OreNames, CONFIG.OreSearchRadius
+			CONFIG.OreNames, CONFIG.OreSearchRadius, Mining = { "Coal" }, CONFIG.WorkRadius, true
+			pcall(farmStep)
+			CONFIG.OreNames, CONFIG.OreSearchRadius, Mining = names, radius, false
+			return
+		end
+	end
+	if fuel < CONFIG.DriveMinFuel then driveStop(); Phase = "Нет топлива — жду канистры"; return end
+
+	local w = finalWallAhead(dp)
+	if w and not wallReady[w] then
+		if hpPct() < CONFIG.SafeHpPct then driveStop(); Phase = "Перед финальной стеной: жду HP"; return end
+		wallReady[w] = true
+		status("[Auto] финальная стена — ломаем (будет волна врагов)")
+	end
+	Phase = w and "Ломаю финальную стену" or "Еду"
+	drive()
+end
+
 
 ----------------------------------------------------------------- SCANNER
 -- Скан: печать в F9 + копирование в буфер обмена
@@ -1397,18 +1798,23 @@ local function copyText(text)
 	return clip and pcall(clip, text) or false
 end
 
+
 ----------------------------------------------------------------- LOOPS
 local loops = {
-	Farm = farmStep, Collect = function() chestStep(); collectStep(false) end,
-	Ammo = function() collectStep(true) end, AutoBuy = autoBuyStep,
-	Fuel = fuelStep, Gate = gateStep, Burn = burnStep,
-	KillAura = function() killStep(CONFIG.KillRadius, true) end, Dungeon = dungeonStep,
-	AutoDrive = driveStep,
+	Auto = autoStep,
+	Farm = farmStep,
+	KillAura = function()
+		if hpPct() < CONFIG.GuardHpPct then hide("Kill Aura") else killStep(CONFIG.KillRadius, true) end
+	end,
+	SkipCutscenes = skipCutscene,
 }
 for name, fn in pairs(loops) do
 	task.spawn(function()
 		while Running do
-			if State[name] and not Selling then pcall(fn) end
+			if State[name] and not Selling then
+				local ok, err = pcall(fn)
+				if not ok then status("[Ошибка] " .. name .. ": " .. tostring(err)); task.wait(1) end
+			end
 			task.wait(CONFIG.Tick)
 		end
 	end)
@@ -1416,13 +1822,15 @@ end
 task.spawn(function()
 	while Running do pcall(highlightStep); task.wait(1) end
 end)
--- тумблер выключили вручную — сбросить газ и выйти из водительского места
+-- авто-фарм выключили — отпустить газ и выйти из водительского места
 task.spawn(function()
 	while Running do
-		if driveStarted and not State.AutoDrive then pcall(driveStop, "выключено") end
+		if driveStarted and not State.Auto then pcall(driveStop, "выключено") end
+		if not State.Auto and Phase ~= "Выключено" then Phase = "Выключено" end
 		task.wait(0.5)
 	end
 end)
+
 
 -- Noclip: всегда, если включён тумблер, и автоматически во время перелётов скрипта
 local noclipWas = {}
@@ -1441,7 +1849,10 @@ table.insert(Connections, game:GetService("RunService").Stepped:Connect(function
 	end
 end))
 
+
 ----------------------------------------------------------------- UI
+-- UI в отдельной функции: у главного блока Luau лимит 200 локальных переменных
+;(function()
 local TweenService = game:GetService("TweenService")
 local UIS          = game:GetService("UserInputService")
 
@@ -1454,6 +1865,9 @@ local T = {
 	Sub    = Color3.fromRGB(130, 130, 145),
 	Accent = Color3.fromRGB(92, 140, 255),
 	Off    = Color3.fromRGB(58, 58, 68),
+	Good   = Color3.fromRGB(46, 170, 105),
+	Bad    = Color3.fromRGB(215, 70, 70),
+	Warn   = Color3.fromRGB(240, 180, 60),
 }
 local FONT, FONT_B = Enum.Font.Gotham, Enum.Font.GothamBold
 local TI = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -1479,8 +1893,8 @@ local gui = new("ScreenGui", { Name = "DrillFarm", ResetOnSpawn = false,
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, pg)
 
 local main = new("Frame", {
-	Size = UDim2.new(0, 260, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-	Position = UDim2.new(0, 24, 0.25, 0), BackgroundColor3 = T.Bg, BorderSizePixel = 0,
+	Size = UDim2.new(0, 270, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+	Position = UDim2.new(0, 24, 0.12, 0), BackgroundColor3 = T.Bg, BorderSizePixel = 0,
 }, gui)
 corner(main, 12); stroke(main)
 new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder }, main)
@@ -1492,7 +1906,7 @@ new("TextLabel", {
 	BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left,
 	Position = UDim2.new(0, 16, 0, 6), Size = UDim2.new(1, -90, 0, 18),
 }, header)
-new("TextLabel", {
+local subLabel = new("TextLabel", {
 	Text = "Drill to Earth's Core", Font = FONT, TextSize = 11, TextColor3 = T.Sub,
 	BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left,
 	Position = UDim2.new(0, 16, 0, 24), Size = UDim2.new(1, -90, 0, 14),
@@ -1508,30 +1922,31 @@ local closeBtn = new("TextButton", {
 }, header)
 corner(closeBtn, 8)
 
--- Контент
--- Прокручиваемый контент: своя реализация (колесо, ЛКМ, палец)
+-- Вкладки
+local tabHolder = new("Frame", { Size = UDim2.new(1, 0, 0, 38), BackgroundTransparency = 1, LayoutOrder = 1 }, main)
+local tabBar = new("Frame", { Size = UDim2.new(1, -24, 0, 30), Position = UDim2.new(0, 12, 0, 0),
+	BackgroundColor3 = T.Card, BorderSizePixel = 0 }, tabHolder)
+corner(tabBar, 8)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder }, tabBar)
+
+-- Прокручиваемая область: своя реализация (колесо, ЛКМ, палец), у каждой вкладки своя страница
 local view = new("Frame", {
 	Size = UDim2.new(1, 0, 0, 300), BackgroundTransparency = 1, BorderSizePixel = 0,
-	ClipsDescendants = true, LayoutOrder = 1,
+	ClipsDescendants = true, LayoutOrder = 2,
 }, main)
-local content = new("Frame", {
-	Size = UDim2.new(1, -6, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-	BackgroundTransparency = 1, BorderSizePixel = 0,
-}, view)
-local list = new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, content)
-new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 6),
-	PaddingBottom = UDim.new(0, 12) }, content)
-local thumb = new("Frame", { Size = UDim2.new(0, 3, 0, 40), Position = UDim2.new(1, -5, 0, 0),
+local thumb = new("Frame", { Size = UDim2.new(0, 3, 0, 40), Position = UDim2.new(1, -5, 0, 0), ZIndex = 5,
 	BackgroundColor3 = T.Accent, BackgroundTransparency = 0.3, BorderSizePixel = 0 }, view)
 corner(thumb, 2)
 
+local pages, tabs, cur = {}, {}, nil
 local scrollY, scrollMoved, sliderActive = 0, false, false
-local function contentH() return list.AbsoluteContentSize.Y + 12 end
+local function contentH() return cur and cur.list.AbsoluteContentSize.Y + 12 or 0 end
 local function setScroll(y)
+	if not cur then return end
 	local viewH = view.AbsoluteSize.Y
 	local maxY = math.max(0, contentH() - viewH)
 	scrollY = math.clamp(y, 0, maxY)
-	content.Position = UDim2.new(0, 0, 0, -scrollY)
+	cur.frame.Position = UDim2.new(0, 0, 0, -scrollY)
 	thumb.Visible = maxY > 0
 	if maxY > 0 then
 		local th = math.max(24, viewH * viewH / contentH())
@@ -1539,10 +1954,10 @@ local function setScroll(y)
 		thumb.Position = UDim2.new(1, -5, 0, (viewH - th) * scrollY / maxY)
 	end
 end
--- Высота = контент, но не больше 65% экрана
+-- Высота = контент, но не больше 70% экрана
 local function fitHeight()
 	local vp = workspace.CurrentCamera.ViewportSize.Y
-	view.Size = UDim2.new(1, 0, 0, math.min(contentH(), math.floor(vp * 0.65) - 44))
+	view.Size = UDim2.new(1, 0, 0, math.min(contentH(), math.floor(vp * 0.7) - 82))
 	setScroll(scrollY)
 end
 local function over(p)
@@ -1584,8 +1999,39 @@ do
 		return Enum.ContextActionResult.Pass
 	end, false, 3000, Enum.UserInputType.MouseWheel)
 end
-bind(list:GetPropertyChangedSignal("AbsoluteContentSize"), fitHeight)
 bind(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), fitHeight)
+
+local function showPage(name)
+	for n, p in pairs(pages) do p.frame.Visible = n == name end
+	for n, b in pairs(tabs) do
+		local on = n == name
+		tween(b, { BackgroundTransparency = on and 0 or 1, TextColor3 = on and T.Text or T.Sub })
+	end
+	cur = pages[name]
+	scrollY = 0
+	fitHeight()
+end
+local page -- страница, в которую добавляют section/toggle/...
+local function addPage(name, title)
+	local frame = new("Frame", {
+		Size = UDim2.new(1, -6, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Visible = false,
+		BackgroundTransparency = 1, BorderSizePixel = 0,
+	}, view)
+	local list = new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, frame)
+	new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 6), PaddingTop = UDim.new(0, 2),
+		PaddingBottom = UDim.new(0, 12) }, frame)
+	pages[name] = { frame = frame, list = list }
+	bind(list:GetPropertyChangedSignal("AbsoluteContentSize"), function() if cur == pages[name] then fitHeight() end end)
+	local b = new("TextButton", {
+		Text = title, Font = FONT_B, TextSize = 12, TextColor3 = T.Sub, AutoButtonColor = false,
+		BackgroundColor3 = T.Accent, BackgroundTransparency = 1, Size = UDim2.new(1 / 3, 0, 1, 0),
+		LayoutOrder = #tabBar:GetChildren(),
+	}, tabBar)
+	corner(b, 8)
+	b.MouseButton1Click:Connect(function() showPage(name) end)
+	tabs[name] = b
+	page = frame
+end
 
 local order = 0
 local function nextOrder() order += 1; return order end
@@ -1595,23 +2041,30 @@ local function section(title)
 		Text = string.upper(title), Font = FONT_B, TextSize = 10, TextColor3 = T.Sub,
 		BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left,
 		Size = UDim2.new(1, 0, 0, 18), LayoutOrder = nextOrder(),
-	}, content)
+	}, page)
 end
 
 local function row(height)
 	local r = new("Frame", { Size = UDim2.new(1, 0, 0, height), BackgroundColor3 = T.Card,
-		BorderSizePixel = 0, LayoutOrder = nextOrder() }, content)
+		BorderSizePixel = 0, LayoutOrder = nextOrder() }, page)
 	corner(r, 8)
 	return r
 end
 
-local function toggle(key, title)
-	local r = row(34)
+local function toggle(key, title, hint)
+	local r = row(hint and 44 or 34)
 	new("TextLabel", {
 		Text = title, Font = FONT, TextSize = 13, TextColor3 = T.Text, BackgroundTransparency = 1,
-		TextXAlignment = Enum.TextXAlignment.Left, Position = UDim2.new(0, 12, 0, 0),
-		Size = UDim2.new(1, -64, 1, 0),
+		TextXAlignment = Enum.TextXAlignment.Left, Position = UDim2.new(0, 12, 0, hint and 5 or 0),
+		Size = UDim2.new(1, -64, 0, hint and 18 or 34),
 	}, r)
+	if hint then
+		new("TextLabel", {
+			Text = hint, Font = FONT, TextSize = 10, TextColor3 = T.Sub, BackgroundTransparency = 1,
+			TextXAlignment = Enum.TextXAlignment.Left, Position = UDim2.new(0, 12, 0, 23),
+			Size = UDim2.new(1, -64, 0, 14),
+		}, r)
+	end
 	local track = new("Frame", { Size = UDim2.new(0, 34, 0, 18), Position = UDim2.new(1, -46, 0.5, -9),
 		BackgroundColor3 = T.Off, BorderSizePixel = 0 }, r)
 	corner(track, 9)
@@ -1621,7 +2074,7 @@ local function toggle(key, title)
 	local hit = new("TextButton", { Text = "", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0) }, r)
 	hit.MouseEnter:Connect(function() tween(r, { BackgroundColor3 = T.Hover }) end)
 	hit.MouseLeave:Connect(function() tween(r, { BackgroundColor3 = T.Card }) end)
-	local shown = false
+	local shown
 	local function render()
 		local on = State[key]
 		shown = on
@@ -1633,7 +2086,8 @@ local function toggle(key, title)
 		State[key] = not State[key]
 		render()
 	end)
-	-- если скрипт сам выключил функцию (сумка полна и т.п.) — обновить переключатель
+	render()
+	-- если скрипт сам выключил функцию — обновить переключатель
 	task.spawn(function()
 		while Running do
 			if State[key] ~= shown then render() end
@@ -1642,17 +2096,18 @@ local function toggle(key, title)
 	end)
 end
 
-local function slider(title, cfgKey, min, max, step)
+local function slider(title, cfgKey, min, max, step, suffix)
+	suffix = suffix or ""
 	local r = row(46)
 	new("TextLabel", {
 		Text = title, Font = FONT, TextSize = 13, TextColor3 = T.Text, BackgroundTransparency = 1,
 		TextXAlignment = Enum.TextXAlignment.Left, Position = UDim2.new(0, 12, 0, 6),
-		Size = UDim2.new(1, -70, 0, 16),
+		Size = UDim2.new(1, -80, 0, 16),
 	}, r)
 	local val = new("TextLabel", {
-		Text = tostring(CONFIG[cfgKey]), Font = FONT_B, TextSize = 12, TextColor3 = T.Accent,
+		Text = tostring(CONFIG[cfgKey]) .. suffix, Font = FONT_B, TextSize = 12, TextColor3 = T.Accent,
 		BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Right,
-		Position = UDim2.new(1, -62, 0, 6), Size = UDim2.new(0, 50, 0, 16),
+		Position = UDim2.new(1, -72, 0, 6), Size = UDim2.new(0, 60, 0, 16),
 	}, r)
 	local bar = new("Frame", { Size = UDim2.new(1, -24, 0, 4), Position = UDim2.new(0, 12, 0, 32),
 		BackgroundColor3 = T.Off, BorderSizePixel = 0 }, r)
@@ -1666,7 +2121,7 @@ local function slider(title, cfgKey, min, max, step)
 		local a = math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
 		local v = math.floor((min + (max - min) * a) / step + 0.5) * step
 		CONFIG[cfgKey] = v
-		val.Text = tostring(v)
+		val.Text = tostring(v) .. suffix
 		fill.Size = UDim2.new((v - min) / (max - min), 0, 1, 0)
 	end
 	local hit = new("TextButton", { Text = "", BackgroundTransparency = 1,
@@ -1688,52 +2143,129 @@ local function slider(title, cfgKey, min, max, step)
 	end)
 end
 
-local function action(title, fn)
+local function action(title, fn, color)
 	local b = new("TextButton", {
 		Text = title, Font = FONT_B, TextSize = 13, TextColor3 = T.Text, AutoButtonColor = false,
-		BackgroundColor3 = T.Accent, Size = UDim2.new(1, 0, 0, 34), LayoutOrder = nextOrder(),
-	}, content)
+		BackgroundColor3 = color or T.Card, Size = UDim2.new(1, 0, 0, 34), LayoutOrder = nextOrder(),
+	}, page)
 	corner(b, 8)
+	if not color then stroke(b) end
 	b.MouseEnter:Connect(function() tween(b, { BackgroundTransparency = 0.15 }) end)
 	b.MouseLeave:Connect(function() tween(b, { BackgroundTransparency = 0 }) end)
-	b.MouseButton1Click:Connect(function() if not scrollMoved then fn(b) end end)
+	b.MouseButton1Click:Connect(function()
+		if scrollMoved then return end
+		local t0 = b.Text
+		task.spawn(function()
+			local ok, res = pcall(fn, b)
+			b.Text = ok and (res or "Готово ✓") or "Ошибка"
+			task.delay(1.5, function() if b.Parent then b.Text = t0 end end)
+		end)
+	end)
 	return b
 end
 
-section("Фарм")
-toggle("Farm", "Авто-фарм руды")
-toggle("Collect", "Авто-сбор")
-toggle("Ammo", "Патроны (25 st)")
-toggle("AutoBuy", "Автопокупка")
-toggle("AutoSell", "Автопродажа (сумка полна)")
-section("Подземелье")
-toggle("Dungeon", "Авто-данж (монстры + сундуки)")
-toggle("KillAura", "Kill Aura (из-под земли)")
-section("Бур")
-toggle("Fuel", "Заправка")
-toggle("Gate", "Ворота подземелья")
-toggle("AutoDrive", "Авто-поездка бура")
-action("Телепорт к дрели", function(b)
-	local drill = getDrill()
-	if drill then
-		tpToDrill(drill)
-		b.Text = "Готово ✓"
-	else
-		b.Text = "Дрель не найдена"
+-- Плитка статуса: заголовок сверху, значение крупно
+local function tile(parent, title, x, y, w)
+	local f = new("Frame", { Size = UDim2.new(w or 0.5, -4, 0, 38), Position = UDim2.new(x, x > 0 and 4 or 0, 0, y),
+		BackgroundColor3 = T.Bg, BorderSizePixel = 0 }, parent)
+	corner(f, 6)
+	new("TextLabel", { Text = title, Font = FONT, TextSize = 10, TextColor3 = T.Sub, BackgroundTransparency = 1,
+		TextXAlignment = Enum.TextXAlignment.Left, Position = UDim2.new(0, 8, 0, 3), Size = UDim2.new(1, -16, 0, 12) }, f)
+	return new("TextLabel", { Text = "—", Font = FONT_B, TextSize = 13, TextColor3 = T.Text, BackgroundTransparency = 1,
+		TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+		Position = UDim2.new(0, 8, 0, 16), Size = UDim2.new(1, -16, 0, 18) }, f)
+end
+
+----------------------------------------------------------------- Вкладка «Главная»
+addPage("main", "Главная")
+local autoBtn = new("TextButton", {
+	Text = "", Font = FONT_B, TextSize = 15, TextColor3 = T.Text, AutoButtonColor = false,
+	BackgroundColor3 = T.Good, Size = UDim2.new(1, 0, 0, 48), LayoutOrder = nextOrder(),
+}, page)
+corner(autoBtn, 10)
+local function renderAuto()
+	autoBtn.Text = State.Auto and "■  ОСТАНОВИТЬ АВТО-ФАРМ" or "▶  ЗАПУСТИТЬ АВТО-ФАРМ"
+	tween(autoBtn, { BackgroundColor3 = State.Auto and T.Bad or T.Good })
+end
+autoBtn.MouseButton1Click:Connect(function()
+	if scrollMoved then return end
+	State.Auto = not State.Auto
+	if State.Auto then
+		State.Farm, State.KillAura = false, false -- они дерутся за персонажа с авто-фармом
+		Stats.start = Stats.start or os.clock()
 	end
-	task.delay(1.5, function() if b.Parent then b.Text = "Телепорт к дрели" end end)
+	renderAuto()
 end)
-section("Прочее")
-toggle("Burn", "Сжигание трупов")
+renderAuto()
+
+local card = row(186)
+new("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8), PaddingTop = UDim.new(0, 8) }, card)
+local vPhase = tile(card, "Сейчас", 0, 0, 1)
+local vHp    = tile(card, "Здоровье", 0, 44)
+local vFuel  = tile(card, "Топливо бура", 0.5, 44)
+local vBag   = tile(card, "Сумка", 0, 88)
+local vCoins = tile(card, "Монеты", 0.5, 88)
+local vDmg   = tile(card, "Урон бура", 0, 132)
+local vTime  = tile(card, "Время фарма", 0.5, 132)
+
+local counters = new("TextLabel", {
+	Text = "", Font = FONT, TextSize = 11, TextColor3 = T.Sub, BackgroundTransparency = 1, TextWrapped = true,
+	TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, 0, 0, 30), LayoutOrder = nextOrder(),
+}, page)
+StatusLabel = new("TextLabel", {
+	Text = "Лог: —", Font = FONT, TextSize = 11, TextColor3 = T.Accent, TextWrapped = true,
+	BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+	Size = UDim2.new(1, 0, 0, 30), LayoutOrder = nextOrder(),
+}, page)
+section("Что делает авто-фарм")
+new("TextLabel", {
+	Text = "Едет на буре и ломает стены · по дороге открывает сундуки, собирает лут и канистры · "
+		.. "заходит в подземелья · продаёт у стола · качает урон бура · заправляет · при низком HP прячется под землю.",
+	Font = FONT, TextSize = 11, TextColor3 = T.Sub, BackgroundTransparency = 1, TextWrapped = true,
+	TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, 0, 0, 58), LayoutOrder = nextOrder(),
+}, page)
+
+----------------------------------------------------------------- Вкладка «Настройки»
+addPage("settings", "Настройки")
+section("Безопасность")
+slider("Прятаться при HP ниже", "GuardHpPct", 20, 80, 5, "%")
+slider("Выходить из укрытия при HP", "SafeHpPct", 50, 100, 5, "%")
+section("Авто-фарм")
+slider("Радиус работы от бура", "WorkRadius", 100, 600, 25)
+slider("Заправлять при топливе ниже", "FuelTargetPct", 10, 90, 5, "%")
+slider("Продавать при заполнении сумки", "SellAtPct", 30, 100, 10, "%")
+slider("Радиус в подземелье", "DungeonRadius", 100, 800, 50)
+section("Дополнительно")
+slider("Радиус Kill Aura", "KillRadius", 10, 300, 10)
+slider("Радиус поиска руды", "OreSearchRadius", 0, 500, 10)
+
+----------------------------------------------------------------- Вкладка «Ещё»
+addPage("extra", "Ещё")
+section("Функции")
+toggle("SkipCutscenes", "Авто-скип катсцен", "работает всегда, даже без авто-фарма")
+toggle("KillAura", "Kill Aura", "бьёт монстров рядом, прячется при низком HP")
+toggle("Farm", "Фарм руды", "отдельно от авто-фарма")
 toggle("Noclip", "Noclip")
 toggle("Highlight", "Подсветка монстров")
-section("Настройки")
-slider("Радиус поиска руды", "OreSearchRadius", 0, 500, 10)
-slider("Радиус Kill Aura", "KillRadius", 10, 300, 10)
-slider("Радиус данжа", "DungeonRadius", 50, 1000, 50)
-slider("Время на руду, сек", "MaxTimePerOre", 0, 30, 1)
-slider("Топливо, %", "FuelTargetPct", 10, 100, 5)
-slider("Макс. цена трупа", "CorpseMaxValue", 0, 2000, 50)
+section("Действия")
+action("Телепорт к буру", function()
+	local drill = getDrill()
+	if not drill then return "Бур не найден" end
+	tpToDrill(drill)
+end)
+action("Заправить сейчас", function()
+	if #fuelTools() == 0 then return "Нет канистр" end
+	return refuel() and "Заправлено ✓" or "Не вышло"
+end)
+action("Продать сейчас", function()
+	local r = hrp()
+	if not r then return "Нет персонажа" end
+	return sellStep(r.Position, true) and "Продано ✓" or "Стол не найден"
+end)
+action("Прокачать бур сейчас", function()
+	return upgradeStep(true) and "Куплено ✓" or "Нет монет/карточек"
+end)
+section("Отладка")
 local lastScan
 local function dumpValue(v, indent, out, depth)
 	if type(v) ~= "table" or depth > 4 then table.insert(out, indent .. tostring(v)); return end
@@ -1746,61 +2278,65 @@ local function dumpValue(v, indent, out, depth)
 		end
 	end
 end
-local copyBtn
-local function scanBtn(title, nearOnly)
-	action(title, function(b)
-		b.Text = "Сканирую..."
-		lastScan = scan(nearOnly)
-		b.Text = title .. "  ✓"
-		copyBtn.BackgroundColor3 = T.Accent
-		copyBtn.TextColor3 = T.Text
-		copyBtn.Text = "Копировать скан"
-		task.delay(2, function() if b.Parent then b.Text = title end end)
-	end)
-end
-scanBtn("Scan", false)
-scanBtn("Scan рядом (25 st)", true)
-action("Инвентарь → F9", function(b)
-	local rf = knit("CarryInventoryService", "GetInventory")
+action("Scan → F9", function() lastScan = scan(false); return "Готово · F9" end)
+action("Scan рядом (25 st)", function() lastScan = scan(true); return "Готово · F9" end)
+action("Инвентарь → F9", function()
 	local out = { "[Inventory]" }
-	if rf then
-		local ok, res = pcall(function() return rf:InvokeServer() end)
-		dumpValue(ok and res or ("ошибка: " .. tostring(res)), "  ", out, 0)
-	else
-		table.insert(out, "  GetInventory не найден")
-	end
+	dumpValue(inventory(true) or "нет данных", "  ", out, 0)
 	lastScan = table.concat(out, "\n")
 	print(lastScan)
-	copyBtn.BackgroundColor3 = T.Accent
-	copyBtn.TextColor3 = T.Text
-	copyBtn.Text = "Копировать скан"
-	b.Text = "Готово ✓"
-	task.delay(1.5, function() if b.Parent then b.Text = "Инвентарь → F9" end end)
 end)
-copyBtn = action("Копировать скан", function(b)
-	if not lastScan then return end
-	local ok = copyText(lastScan)
-	b.Text = ok and "Скопировано ✓" or "Нет буфера · F9"
-	task.delay(2, function() if b.Parent then b.Text = "Копировать скан" end end)
+action("Копировать скан", function()
+	if not lastScan then return "Сначала Scan" end
+	return copyText(lastScan) and "Скопировано ✓" or "Нет буфера · F9"
 end)
-copyBtn.BackgroundColor3 = T.Off
-copyBtn.TextColor3 = T.Sub
-copyBtn.Text = "Копировать · сначала Scan"
-StatusLabel = new("TextLabel", {
-	Text = "Статус: —", Font = FONT, TextSize = 11, TextColor3 = T.Accent, TextWrapped = true,
-	BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left,
-	Size = UDim2.new(1, 0, 0, 28), LayoutOrder = nextOrder(),
-}, content)
 new("TextLabel", {
 	Text = "RightShift — скрыть  ·  × — закрыть", Font = FONT, TextSize = 11, TextColor3 = T.Sub,
 	BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 14), LayoutOrder = nextOrder(),
-}, content)
-fitHeight()
+}, page)
+
+showPage("main")
+
+-- Живой статус на главной
+local coinsCache, coinsAt = nil, 0
+task.spawn(function()
+	while Running do
+		pcall(function()
+			if os.clock() - coinsAt > 3 then
+				coinsAt = os.clock()
+				task.spawn(function() local c = call("CurrencyService", "GetCurrency"); if type(c) == "number" then coinsCache = c end end)
+			end
+			vPhase.Text = Phase
+			vPhase.TextColor3 = State.Auto and T.Text or T.Sub
+			local h = hum()
+			local hp = hpPct()
+			vHp.Text = h and ("%d / %d"):format(math.floor(h.Health), math.floor(h.MaxHealth)) or "—"
+			vHp.TextColor3 = hp < CONFIG.GuardHpPct and T.Bad or hp < CONFIG.SafeHpPct and T.Warn or T.Text
+			local fp, f = fuelPct()
+			local nCans = #fuelTools()
+			vFuel.Text = ("%d%%%s"):format(math.floor(fp), nCans > 0 and ("  +" .. nCans .. " кан.") or "")
+			vFuel.TextColor3 = fp < 20 and T.Bad or fp < CONFIG.FuelTargetPct and T.Warn or T.Text
+			local n, cap = bagUsage()
+			vBag.Text = (n and cap) and (n .. " / " .. cap) or "—"
+			vCoins.Text = coinsCache and tostring(coinsCache) or "—"
+			local d = getDrill()
+			vDmg.Text = d and tostring(1 + (d:GetAttribute("DrillPower") or 0) + (d:GetAttribute("BonusDamage") or 0)) or "—"
+			local t = math.floor(Stats.start and (os.clock() - Stats.start) or 0)
+			vTime.Text = ("%d:%02d:%02d"):format(t // 3600, t % 3600 // 60, t % 60)
+			counters.Text = ("Сундуки %d · Лут %d · Данжи %d · Убито %d\nАпгрейды %d · Заправки %d · Продажи %d · Укрытия %d")
+				:format(Stats.chests, Stats.items, Stats.dungeons, Stats.kills, Stats.upgrades, Stats.refuels, Stats.sells, Stats.hides)
+			subLabel.Text = State.Auto and ("● " .. Phase) or "Drill to Earth's Core"
+			if (autoBtn.Text:find("ОСТАНОВИТЬ", 1, true) ~= nil) ~= State.Auto then renderAuto() end
+		end)
+		task.wait(0.5)
+	end
+end)
 
 -- Закрыть скрипт полностью
 local function shutdown()
 	Running = false
 	pcall(function() if driveStarted then driveStop() end end)
+	pcall(function() local r = hrp(); if r then r.Anchored = false end end)
 	pcall(function() game:GetService("ContextActionService"):UnbindAction("DF_MenuWheel") end)
 	for k in pairs(State) do State[k] = false end
 	for _, c in ipairs(Connections) do c:Disconnect() end
@@ -1821,6 +2357,7 @@ local collapsed = false
 minBtn.MouseButton1Click:Connect(function()
 	collapsed = not collapsed
 	view.Visible = not collapsed
+	tabHolder.Visible = not collapsed
 	minBtn.Text = collapsed and "+" or "–"
 end)
 bind(UIS.InputBegan, function(i, gp)
@@ -1849,10 +2386,13 @@ do
 end
 
 -- доступ для отладочных команд (DF_cmd.lua)
-getgenv().DF = { State = State, CONFIG = CONFIG, Learned = Learned, status = status, scan = scan,
-	groundItems = groundItems, pickupItem = pickupItem, grabSack = grabSack, chestStep = chestStep,
-	chestInfo = chestInfo, chestNode = chestNode, usePrompt = usePrompt, moveTo = moveTo, inventory = inventory,
-	oreNodes = oreNodes, farmStep = farmStep, oreAlive = oreAlive, equipPickaxe = equipPickaxe, equipWeapon = equipWeapon, bagUsage = bagUsage,
-	tryDrop = tryDrop, invEntries = invEntries, nearestSellPart = nearestSellPart, isMySack = isMySack, sellAll = sellAll,
-	enterGate = enterGate, driveStep = driveStep, driveStop = driveStop, enemies = enemies, killOne = killOne, killStep = killStep, dungeonStep = dungeonStep }
+getgenv().DF = { State = State, CONFIG = CONFIG, Stats = Stats, status = status, scan = scan, call = call,
+	groundItems = groundItems, pickupItem = pickupItem, grabSack = grabSack, chestStep = chestStep, moveTo = moveTo,
+	inventory = inventory, bagUsage = bagUsage, invEntries = invEntries, sellAll = sellAll, sellStep = sellStep,
+	equipWeapon = equipWeapon, enemies = enemies, killOne = killOne, killStep = killStep, hide = hide,
+	drive = drive, driveStop = driveStop, refuel = refuel, fuelPct = fuelPct, fuelTools = fuelTools,
+	upgradeStep = upgradeStep, skipCutscene = skipCutscene, autoStep = autoStep, lootStep = lootStep,
+	gateNear = gateNear, enterGate = enterGate, exitDungeon = exitDungeon, dungeonRun = dungeonRun,
+	finalWallAhead = finalWallAhead, phase = function() return Phase end }
 status("[DrillFarm] Загружен")
+end)()
