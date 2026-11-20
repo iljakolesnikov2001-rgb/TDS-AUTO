@@ -123,6 +123,41 @@ local function moveTo(obj, stillOk, targetPos)
 	return okc and ok
 end
 
+-- ТП к дрели в свободную точку (сзади/сбоку/сверху), чтобы не застрять внутри модели
+local function tpToDrill(drill)
+	local r = hrp()
+	if not (r and drill) then return false end
+	local ok, cf, size = pcall(function() return drill:GetBoundingBox() end)
+	if not ok then cf, size = CFrame.new(pos(drill) or r.Position), Vector3.new(10, 10, 10) end
+	local c = player.Character
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { c, drill }
+	local op = OverlapParams.new()
+	op.FilterType = Enum.RaycastFilterType.Exclude
+	op.FilterDescendantsInstances = { c }
+	local L, R = cf.LookVector, cf.RightVector
+	local cands = {
+		cf.Position - L * (size.Z / 2 + 6), cf.Position + L * (size.Z / 2 + 6),
+		cf.Position - R * (size.X / 2 + 6), cf.Position + R * (size.X / 2 + 6),
+		cf.Position + Vector3.new(0, size.Y / 2 + 4, 0),
+	}
+	for idx, p in ipairs(cands) do
+		local spot = p
+		if idx < 5 then
+			local hit = workspace:Raycast(p + Vector3.new(0, size.Y / 2, 0), Vector3.new(0, -size.Y - 20, 0), params)
+			if not hit then spot = nil else spot = hit.Position + Vector3.new(0, 3, 0) end
+		end
+		if spot and #workspace:GetPartBoundsInBox(CFrame.new(spot), Vector3.new(2, 4, 2), op) == 0 then
+			r.AssemblyLinearVelocity = Vector3.zero
+			r.CFrame = CFrame.new(spot, Vector3.new(cf.Position.X, spot.Y, cf.Position.Z))
+			return true
+		end
+	end
+	r.CFrame = CFrame.new(cf.Position + Vector3.new(0, size.Y / 2 + 4, 0)) -- запасной вариант
+	return true
+end
+
 local function attr(name)
 	local c = player.Character
 	return player:GetAttribute(name) or (c and c:GetAttribute(name))
@@ -273,7 +308,7 @@ local function onBagFull(who)
 		end
 	else
 		local drill = workspace:FindFirstChild(CONFIG.DrillName)
-		if drill then tp(drill, Vector3.new(0, 8, 0)) end
+		if drill then tpToDrill(drill) end
 		print("[" .. who .. "] Сумка полна — ТП к дрели")
 	end
 end
@@ -1000,7 +1035,7 @@ toggle("Gate", "Ворота подземелья")
 action("Телепорт к дрели", function(b)
 	local drill = getDrill()
 	if drill then
-		tp(drill, Vector3.new(0, 8, 0))
+		tpToDrill(drill)
 		b.Text = "Готово ✓"
 	else
 		b.Text = "Дрель не найдена"
