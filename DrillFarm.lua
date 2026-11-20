@@ -288,12 +288,43 @@ end
 local pickupOresNear -- определяется ниже (после collect)
 
 -- Точка продажи: ...TradingPost.SellParts.SellPart
-local function nearestSellPart()
-	local list = findAll(function(d)
+-- Если стол далеко, игра его не прогружает (streaming) — запоминаем позицию,
+-- летим туда и просим сервер прогрузить область.
+local lastSellPos
+local function findSellParts()
+	return findAll(function(d)
 		return d:IsA("BasePart") and d.Name == "SellPart" and d:FindFirstAncestor("TradingPost") ~= nil
 	end)
-	return nearest(list)
 end
+local function nearestSellPart()
+	local sp = nearest(findSellParts())
+	if sp then lastSellPos = sp.Position; return sp end
+	if not lastSellPos then
+		print("[Sell] стол продажи не найден (ни разу не был прогружен)")
+		return nil
+	end
+	local r = hrp()
+	if r then
+		r.AssemblyLinearVelocity = Vector3.zero
+		r.CFrame = CFrame.new(lastSellPos + Vector3.new(0, 4, 0))
+	end
+	pcall(function() player:RequestStreamAroundAsync(lastSellPos, 5) end)
+	local t0 = os.clock()
+	repeat
+		task.wait(0.3)
+		sp = nearest(findSellParts())
+	until sp or os.clock() - t0 > 6
+	if not sp then print("[Sell] стол продажи не прогрузился") end
+	return sp
+end
+-- запоминаем позицию стола, пока он прогружен
+task.spawn(function()
+	while Running do
+		local sp = nearest(findSellParts())
+		if sp then lastSellPos = sp.Position end
+		task.wait(5)
+	end
+end)
 
 -- Сумка полна: к точке продажи (если есть), иначе к дрели
 local sellAll -- определяется ниже
