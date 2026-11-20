@@ -46,6 +46,12 @@ local CONFIG = {
 	-- Сундуки
 	ChestRadius     = 150,             -- авто-сбор открывает незапертые сундуки в этом радиусе
 
+	-- Убийство монстров из-под земли (киркой: хитбокс удара считается от персонажа, пол не мешает)
+	KillRadius      = 80,              -- Kill Aura: монстры в этом радиусе
+	DungeonRadius   = 400,             -- Авто-данж: ищем монстров и сундуки в этом радиусе
+	KillDepth       = 2,               -- (авто-подбор: если урона нет — поднимается) на сколько студов ниже подошвы монстра стоим (0 = вплотную)
+	KillTimeout     = 30,              -- сек на одного монстра
+
 	-- Подсветка
 	MonsterFilter   = {},              -- пусто = все монстры
 	HighlightColor  = Color3.fromRGB(255, 60, 60),
@@ -67,7 +73,8 @@ local Running = true
 local Selling = false -- пока идёт продажа, остальные функции ждут
 local Connections = {}
 local State = { Farm=false, Collect=false, Ammo=false, AutoBuy=false,
-                Fuel=false, Gate=false, Burn=false, Highlight=false, Noclip=false, AutoSell=false }
+                Fuel=false, Gate=false, Burn=false, Highlight=false, Noclip=false, AutoSell=false, KillAura=false, Dungeon=false }
+local function collecting() return State.Collect or State.Dungeon end
 
 -- Статус: печать в F9 + строка внизу меню (видно и без консоли)
 local StatusLabel
@@ -451,28 +458,41 @@ end
 
 ----------------------------------------------------------------- FEATURES
 local gameTool -- ниже (рядом со swing)
-local function equipPickaxe()
+-- pick(tool) -> число (приоритет) или nil; экипируем лучший подходящий инструмент
+local function equipBest(pick)
 	local c = player.Character
 	if not c then return end
-	-- экипируем только через ToolService.EquipTool: сервер отвечает "Equip", и ToolController
-	-- игры создаёт объект кирки (ActiveTool). Humanoid:EquipTool этого не делает — удары не засчитываются.
-	local at = gameTool()
-	if at and at.Tool and at.Tool.Parent == c and hasKey(at.Tool.Name, {CONFIG.PickaxeName}) then return at.Tool end
-	local pick
+	local best, bs
 	for _, src in ipairs({ c, player.Backpack }) do
 		for _, t in ipairs(src:GetChildren()) do
-			if not pick and t:IsA("Tool") and hasKey(t.Name, {CONFIG.PickaxeName}) then pick = t end
+			local sc = t:IsA("Tool") and pick(t)
+			if sc and (not bs or sc > bs) then best, bs = t, sc end
 		end
 	end
+	if not best then return end
+	local at = gameTool()
+	if at and at.Tool == best and best.Parent == c then return best end
 	local eq = knit("ToolService", "EquipTool")
-	if not (pick and eq) then return end
-	pcall(function() eq:InvokeServer(pick) end)
+	if not eq then return end
+	pcall(function() eq:InvokeServer(best) end)
 	for _ = 1, 10 do
 		at = gameTool()
-		if at and at.Tool == pick then return pick end
+		if at and at.Tool == best then return best end
 		task.wait(0.1)
 	end
-	return pick
+	return best
+end
+-- экипируем только через ToolService.EquipTool (Humanoid:EquipTool не создаёт ActiveTool — удары не засчитываются)
+local function equipPickaxe()
+	return equipBest(function(t) return hasKey(t.Name, { CONFIG.PickaxeName }) and 1 end)
+end
+-- оружие для монстров: ближний бой с наибольшим уроном (меч бьёт в 5 раз сильнее кирки)
+local function equipWeapon()
+	return equipBest(function(t)
+		if t:GetAttribute("ActionType") == "Swing" and not hasKey(t.Name, { CONFIG.PickaxeName }) then
+			return t:GetAttribute("Damage") or 1
+		end
+	end) or equipPickaxe()
 end
 
 -- Жилы: Part с атрибутами SessionOreType / OreLoaded (Workspace.Chunks...Nodes.Ore_Node*)
@@ -620,6 +640,7 @@ local function farmStep()
 	local start = os.clock()
 	while State.Farm and oreAlive(node) do
 		if CONFIG.MaxTimePerOre > 0 and os.clock() - start > CONFIG.MaxTimePerOre then break end
+		if Selling then task.wait(0.3) continue end -- убийство монстров / продажа заняли персонажа
 		r = hrp()
 		if r then
 			r.CFrame = CFrame.lookAt(stand, Vector3.new(p.X, stand.Y, p.Z))
@@ -671,10 +692,10 @@ local function collectItems()
 	local items = groundItems()
 	table.sort(items, function(a, b) return dist(a) < dist(b) end)
 	for _, it in ipairs(items) do
-		if not State.Collect then return end
+		if not collecting() then return end
 		if bagFull() then
 			onBagFull("Collect")
-			if bagFull() then State.Collect = false end
+			if bagFull() then State.Collect = false; State.Dungeon = false end
 			return
 		end
 		local v = it:GetAttribute("Value") or 0
@@ -683,7 +704,7 @@ local function collectItems()
 			if (skipUntil[it] or 0) < os.clock() and not grabSack(it) then skipUntil[it] = os.clock() + 30 end
 		elseif v >= CONFIG.ItemsMinValue and not hasKey(name, CONFIG.IgnoredItems)
 			and (skipUntil[it] or 0) < os.clock() then
-			if moveTo(it, function() return State.Collect end) then
+			if moveTo(it, collecting) then
 				task.wait(0.15)
 				if pickupItem(it) then
 					status("[Collect] подобрал: " .. name)
@@ -1038,10 +1059,10 @@ local function chestStep()
 		local d = dist(pr.Parent)
 		if d < bd then best, bd = pr, d end
 	end
-	if not best then return end
+	if not best then return false end
 	chestTried[best] = os.clock() + 120 -- не открылся — вернёмся не раньше чем через 2 мин
 	local chest = chestNode(best) or best.Parent
-	if moveTo(best.Parent, function() return State.Collect end) then
+	if moveTo(best.Parent, collecting) then
 		task.wait(0.3) -- дать игре включить промпт
 		local wasOn = best.Enabled
 		local function opened() return changed("chest", chest) or not best.Parent or (wasOn and not best.Enabled) end
@@ -1050,6 +1071,7 @@ local function chestStep()
 			.. chest:GetFullName() .. " | " .. best.ActionText)
 		task.wait(1.2)
 	end
+	return true
 end
 
 local function highlightStep()
@@ -1069,6 +1091,125 @@ local function highlightStep()
 			end
 		end
 	end
+end
+
+----------------------------------------------------------------- KILL AURA / DUNGEON
+-- Бьём монстров киркой из-под земли: сервер берёт цели по расстоянию от персонажа
+-- (MeleeSwingBounds), потолка нет — достаточно стоять под подошвой монстра, ниже пола.
+local RunService = game:GetService("RunService")
+local killDepth = CONFIG.KillDepth
+local killSkip = setmetatable({}, { __mode = "k" })
+local Killing = false
+local lastSurface
+
+local function enemies(radius)
+	local out, folder, r = {}, workspace:FindFirstChild("Npc"), hrp()
+	if not (folder and r) then return out end
+	for _, m in ipairs(folder:GetChildren()) do
+		local h = m:IsA("Model") and m:FindFirstChild("Humanoid")
+		-- мимики (Health ~1e11) — сундуки-монстры, их не бьём
+		if h and h.Health > 0 and h.MaxHealth < 1e6 and m:GetAttribute("NpcFaction") == "Enemy"
+			and (killSkip[m] or 0) < os.clock() then
+			local p = pos(m)
+			if p and (radius <= 0 or (p - r.Position).Magnitude <= radius) then table.insert(out, m) end
+		end
+	end
+	table.sort(out, function(a, b) return dist(a) < dist(b) end)
+	return out
+end
+
+local function standUnder(m)
+	local ok, cf, size = pcall(m.GetBoundingBox, m)
+	local p = ok and Vector3.new(cf.Position.X, cf.Position.Y - size.Y / 2, cf.Position.Z) or pos(m)
+	return p and p - Vector3.new(0, killDepth, 0), p
+end
+
+local function killOne(m)
+	local h = m:FindFirstChild("Humanoid")
+	local tool = equipWeapon()
+	if not (h and tool) then killSkip[m] = os.clock() + 30; return end
+	local stand, base = standUnder(m)
+	if not stand then return end
+	if not moveTo(m, function() return State.KillAura or State.Dungeon end, stand) then return end
+	Moving = true -- ноклип на время удара
+	local t0, lastHp, lastHit = os.clock(), h.Health, os.clock()
+	while Running and (State.KillAura or State.Dungeon) and m.Parent and h.Health > 0 do
+		local r = hrp()
+		stand, base = standUnder(m)
+		if not (r and stand) then break end
+		lastSurface = base
+		r.AssemblyLinearVelocity = Vector3.zero
+		r.CFrame = CFrame.new(stand)
+		swing(tool)
+		if h.Health < lastHp - 0.01 then lastHp, lastHit = h.Health, os.clock() end
+		if os.clock() - lastHit > 1.5 then -- урона нет: поднимаемся ближе к монстру
+			if killDepth <= 0 then break end
+			killDepth = math.max(0, killDepth - 1)
+			status("[Kill] нет урона — глубина " .. killDepth)
+			lastHit = os.clock()
+		end
+		if CONFIG.KillTimeout > 0 and os.clock() - t0 > CONFIG.KillTimeout then break end
+		RunService.Heartbeat:Wait()
+	end
+	Moving = false
+	local dead = not m.Parent or h.Health <= 0
+	if not dead then killSkip[m] = os.clock() + 30 end
+	status(("[Kill] %s: %s за %.1fс (глубина %s)"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0, killDepth))
+end
+
+-- true — были монстры (шаг занят), false — убивать некого
+local function killStep(radius, back)
+	if Killing then return true end
+	if #enemies(radius) == 0 then return false end
+	Killing, Selling = true, true
+	local r = hrp()
+	local origin = r and r.CFrame
+	pcall(function()
+		while Running and (State.KillAura or State.Dungeon) do
+			local list = enemies(radius)
+			if #list == 0 then break end
+			killOne(list[1])
+		end
+	end)
+	Moving, Killing, Selling = false, false, false
+	r = hrp()
+	-- Aura возвращает на место (идёт фарм), Dungeon — поднимает на поверхность у последнего монстра
+	if r then
+		if back and origin then r.CFrame = origin
+		elseif lastSurface then r.CFrame = CFrame.new(lastSurface + Vector3.new(0, 4, 0)) end
+		r.AssemblyLinearVelocity = Vector3.zero
+	end
+	return true
+end
+
+-- Вход в подземелье: летим к воротам DungeonGate_* и жмём их промпт.
+-- Вызывается ПЕРЕД зачисткой: пока рядом (в DungeonRadius) есть ворота, мы ещё снаружи — входим.
+local gateNext = 0
+local function enterGate()
+	if os.clock() < gateNext or bagFull() then return false end
+	gateNext = os.clock() + 8
+	local best, bd
+	for _, g in ipairs(workspace:GetChildren()) do
+		if g:IsA("Model") and string.sub(g.Name, 1, #CONFIG.GateName) == CONFIG.GateName then
+			local d = dist(g)
+			if d <= CONFIG.DungeonRadius and (not bd or d < bd) then best, bd = g, d end
+		end
+	end
+	if not best then return false end
+	if bd > 12 and not moveTo(best, function() return State.Dungeon end) then return true end
+	task.wait(0.3)
+	status("[Dungeon] вход: " .. best.Name)
+	firePrompt(best)
+	task.wait(3)
+	return true
+end
+
+-- Авто-данж: вход в ворота → все монстры → сундуки и лут
+local function dungeonStep()
+	if enterGate() then return end
+	if killStep(CONFIG.DungeonRadius, false) then return end
+	if chestStep() ~= false then return end -- nil = ждём следующий скан, true = занимались сундуком
+	collectStep(false)
 end
 
 ----------------------------------------------------------------- SCANNER
@@ -1141,6 +1282,7 @@ local loops = {
 	Farm = farmStep, Collect = function() chestStep(); collectStep(false) end,
 	Ammo = function() collectStep(true) end, AutoBuy = autoBuyStep,
 	Fuel = fuelStep, Gate = gateStep, Burn = burnStep,
+	KillAura = function() killStep(CONFIG.KillRadius, true) end, Dungeon = dungeonStep,
 }
 for name, fn in pairs(loops) do
 	task.spawn(function()
@@ -1436,6 +1578,9 @@ toggle("Collect", "Авто-сбор")
 toggle("Ammo", "Патроны (25 st)")
 toggle("AutoBuy", "Автопокупка")
 toggle("AutoSell", "Автопродажа (сумка полна)")
+section("Подземелье")
+toggle("Dungeon", "Авто-данж (монстры + сундуки)")
+toggle("KillAura", "Kill Aura (из-под земли)")
 section("Бур")
 toggle("Fuel", "Заправка")
 toggle("Gate", "Ворота подземелья")
@@ -1455,6 +1600,9 @@ toggle("Noclip", "Noclip")
 toggle("Highlight", "Подсветка монстров")
 section("Настройки")
 slider("Радиус поиска руды", "OreSearchRadius", 0, 500, 10)
+slider("Радиус Kill Aura", "KillRadius", 10, 300, 10)
+slider("Радиус данжа", "DungeonRadius", 50, 1000, 50)
+slider("Глубина под монстром", "KillDepth", 0, 10, 1)
 slider("Время на руду, сек", "MaxTimePerOre", 0, 30, 1)
 slider("Топливо, %", "FuelTargetPct", 10, 100, 5)
 slider("Макс. цена трупа", "CorpseMaxValue", 0, 2000, 50)
@@ -1575,6 +1723,7 @@ end
 getgenv().DF = { State = State, CONFIG = CONFIG, Learned = Learned, status = status, scan = scan,
 	groundItems = groundItems, pickupItem = pickupItem, grabSack = grabSack, chestStep = chestStep,
 	chestInfo = chestInfo, chestNode = chestNode, usePrompt = usePrompt, moveTo = moveTo, inventory = inventory,
-	oreNodes = oreNodes, farmStep = farmStep, oreAlive = oreAlive, equipPickaxe = equipPickaxe, bagUsage = bagUsage,
-	tryDrop = tryDrop, invEntries = invEntries, nearestSellPart = nearestSellPart, isMySack = isMySack, sellAll = sellAll }
+	oreNodes = oreNodes, farmStep = farmStep, oreAlive = oreAlive, equipPickaxe = equipPickaxe, equipWeapon = equipWeapon, bagUsage = bagUsage,
+	tryDrop = tryDrop, invEntries = invEntries, nearestSellPart = nearestSellPart, isMySack = isMySack, sellAll = sellAll,
+	enterGate = enterGate, enemies = enemies, killOne = killOne, killStep = killStep, dungeonStep = dungeonStep }
 status("[DrillFarm] Загружен")
