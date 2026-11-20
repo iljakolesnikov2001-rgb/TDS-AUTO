@@ -64,6 +64,7 @@ local VIM      = game:GetService("VirtualInputManager")
 local player   = Players.LocalPlayer
 
 local Running = true
+local Selling = false -- пока идёт продажа, остальные функции ждут
 local Connections = {}
 local State = { Farm=false, Collect=false, Ammo=false, AutoBuy=false,
                 Fuel=false, Gate=false, Burn=false, Highlight=false, Noclip=false, AutoSell=false }
@@ -171,18 +172,112 @@ local function attr(name)
 	return player:GetAttribute(name) or (c and c:GetAttribute(name))
 end
 
+-- Промпт: на время снимаем удержание/прямую видимость/дистанцию (мобильные экзекуторы
+-- часто игнорируют HoldDuration), жмём fireproximityprompt, а если не сработало — "руками".
+local function usePrompt(pr, done)
+	local hold, los, maxd = pr.HoldDuration, pr.RequiresLineOfSight, pr.MaxActivationDistance
+	pcall(function() pr.HoldDuration = 0; pr.RequiresLineOfSight = false; pr.MaxActivationDistance = math.max(maxd, 30) end)
+	if fireproximityprompt then pcall(fireproximityprompt, pr); task.wait(0.4) end
+	if not (done and done()) and pr.Parent then
+		pcall(function() pr:InputHoldBegin(); task.wait(0.1); pr:InputHoldEnd() end)
+		task.wait(0.3)
+	end
+	pcall(function() pr.HoldDuration, pr.RequiresLineOfSight, pr.MaxActivationDistance = hold, los, maxd end)
+	return done == nil or done()
+end
+
 local function firePrompt(obj, key)
 	for _, d in ipairs(obj:GetDescendants()) do
 		if d:IsA("ProximityPrompt") and (not key
 			or hasKey(d.Name, {key}) or hasKey(d.ActionText, {key})) then
-			if fireproximityprompt then
-				fireproximityprompt(d)
-			else
-				d:InputHoldBegin(); task.wait(d.HoldDuration + 0.05); d:InputHoldEnd()
-			end
+			usePrompt(d)
 			return true
 		end
 	end
+	return false
+end
+
+----------------------------------------------------------------- LEARN
+-- Подсматриваем, каким remote игра САМА подбирает предмет / открывает сундук,
+-- когда игрок делает это руками, и потом повторяем так же. Нужен hookmetamethod.
+local Learned = {} -- kind ("item"/"chest") -> { remote, method, args, idx, how, partName }
+local function chestNode(inst)
+	local n = inst
+	for _ = 1, 6 do
+		if not n or n == workspace then return end
+		if n:GetAttribute("SessionChestId") or n:GetAttribute("RuntimeChestModel")
+			or hasKey(n.Name, { "Chest", "Crate" }) then return n end
+		n = n.Parent
+	end
+end
+local function itemNode(inst)
+	local n = inst
+	for _ = 1, 6 do
+		if not n or n == workspace then return end
+		if n:GetAttribute("SessionSnapshotItemId") then return n end
+		n = n.Parent
+	end
+end
+local function refOf(v)
+	if typeof(v) == "Instance" and v:IsDescendantOf(workspace) then
+		local n = itemNode(v)
+		if n then return "item", n, v == n and "inst" or "part" end
+		n = chestNode(v)
+		if n then return "chest", n, v == n and "inst" or "part" end
+	elseif type(v) == "string" and workspace:FindFirstChild("Items") then
+		for _, it in ipairs(workspace.Items:GetChildren()) do
+			if it:GetAttribute("SessionSnapshotItemId") == v then return "item", it, "id" end
+		end
+	end
+end
+local function changed(kind, node)
+	if not node.Parent or not node:IsDescendantOf(workspace) then return true end
+	if kind == "item" then
+		local m = node:FindFirstAncestorOfClass("Model")
+		return m ~= nil and Players:GetPlayerFromCharacter(m) ~= nil
+	end
+	local st = node:GetAttribute("ChestOpenState")
+	return st ~= nil and st ~= "Idle"
+end
+local function learnFrom(remote, method, args)
+	for i = 1, args.n do
+		local kind, node, how = refOf(args[i])
+		-- во время продажи предметы со стола исчезают сами — не путать это с подбором
+		if kind == "item" and Selling then return end
+		if kind then
+			task.wait(1.5) -- засчитываем, только если предмет реально подобрался / сундук открылся
+			if changed(kind, node) then
+				Learned[kind] = { remote = remote, method = method, args = args, idx = i, how = how,
+					partName = how == "part" and args[i].Name or nil }
+				status(("[Learn] %s: %s, аргумент #%d (%s)"):format(kind, remote:GetFullName(), i, how))
+			end
+			return
+		end
+	end
+end
+if hookmetamethod and getnamecallmethod then
+	local old
+	old = hookmetamethod(game, "__namecall", (newcclosure or function(f) return f end)(function(self, ...)
+		local m = getnamecallmethod()
+		if Running and (m == "InvokeServer" or m == "FireServer") and not (checkcaller and checkcaller()) then
+			local args = table.pack(...)
+			task.spawn(pcall, learnFrom, self, m, args)
+		end
+		return old(self, ...)
+	end))
+end
+local function replay(kind, node)
+	local L = Learned[kind]
+	if not (L and L.remote.Parent) then return false end
+	local args = table.clone(L.args)
+	if L.how == "inst" then args[L.idx] = node
+	elseif L.how == "id" then args[L.idx] = node:GetAttribute("SessionSnapshotItemId")
+	else args[L.idx] = node:FindFirstChild(L.partName, true) or node:FindFirstChildWhichIsA("BasePart", true) end
+	task.spawn(pcall, function()
+		if L.method == "InvokeServer" then L.remote:InvokeServer(table.unpack(args, 1, args.n))
+		else L.remote:FireServer(table.unpack(args, 1, args.n)) end
+	end)
+	for _ = 1, 8 do task.wait(0.15); if changed(kind, node) then return true end end
 	return false
 end
 
@@ -254,6 +349,16 @@ end
 -- Подбор предмета: перебираем варианты аргументов Pickup, запоминаем рабочий
 local pickupWay
 local function pickupItem(it)
+	-- 1) как это делает сама игра (выучено), 2) промпт/клик на предмете, 3) перебор Pickup
+	if replay("item", it) then return true end
+	local function gone() return changed("item", it) end
+	local pr = it:FindFirstChildWhichIsA("ProximityPrompt", true)
+	if pr and usePrompt(pr, gone) then return true end
+	local cd = it:FindFirstChildWhichIsA("ClickDetector", true)
+	if cd and fireclickdetector then
+		pcall(fireclickdetector, cd); task.wait(0.4)
+		if gone() then return true end
+	end
 	local rf = knit("CarryInventoryService", "Pickup")
 	if not rf then return false end
 	local id = it:GetAttribute("SessionSnapshotItemId")
@@ -397,7 +502,6 @@ end)
 
 -- Сумка полна: к точке продажи (если есть), иначе к дрели
 local sellAll -- определяется ниже
-local Selling = false -- пока идёт продажа, остальные функции ждут
 local function onBagFull(who)
 	-- Автопродажа включена и есть стол продажи — продаём; иначе — к дрели
 	local sell = State.AutoSell and nearestSellPart()
@@ -510,8 +614,6 @@ end
 
 local grabSack -- ниже
 local function collectItems()
-	local pickup = knit("CarryInventoryService", "Pickup")
-	if not pickup then return end
 	local items = groundItems()
 	table.sort(items, function(a, b) return dist(a) < dist(b) end)
 	for _, it in ipairs(items) do
@@ -545,8 +647,7 @@ end
 -- Поднять выпавшую руду (DisplayCategory=Ore) рядом с точкой
 pickupOresNear = function(center, radius)
 	local folder = workspace:FindFirstChild("Items")
-	local pickup = knit("CarryInventoryService", "Pickup")
-	if not folder or not pickup then return end
+	if not folder then return end
 	local t0 = os.clock()
 	repeat -- руда может появиться не сразу
 		local found = false
@@ -723,8 +824,7 @@ end
 
 sellAll = function(sellPart)
 	local folder = workspace:FindFirstChild("Items")
-	local pickup = knit("CarryInventoryService", "Pickup")
-	if not folder or not pickup then return end
+	if not folder then return end
 	local spot = sellPart.Parent and sellPart.Parent.Parent
 		and sellPart.Parent.Parent:FindFirstChild("SellSpot", true) or sellPart
 	tp(spot, Vector3.new(0, 4, 0))
@@ -866,10 +966,11 @@ local chestNextScan = 0
 local function chestStep()
 	if os.clock() < chestNextScan then return end
 	chestNextScan = os.clock() + 2
+	-- Enabled не проверяем: игра часто включает промпт сундука, только когда игрок рядом.
+	-- Текст промпта тоже не важен — достаточно, что он висит на сундуке.
 	local list = {}
 	for _, d in ipairs(workspace:GetDescendants()) do
-		if d:IsA("ProximityPrompt") and d.Enabled and (chestTried[d] or 0) < os.clock()
-			and hasKey(d.ActionText, { "Interact", "Open" }) and chestInfo(d) then
+		if d:IsA("ProximityPrompt") and (chestTried[d] or 0) < os.clock() and chestInfo(d) then
 			table.insert(list, d)
 		end
 	end
@@ -879,15 +980,15 @@ local function chestStep()
 		if d < bd then best, bd = pr, d end
 	end
 	if not best then return end
-	chestTried[best] = os.clock() + 20
+	chestTried[best] = os.clock() + 120 -- не открылся — вернёмся не раньше чем через 2 мин
+	local chest = chestNode(best) or best.Parent
 	if moveTo(best.Parent, function() return State.Collect end) then
-		task.wait(0.2)
-		if fireproximityprompt then
-			fireproximityprompt(best)
-		else
-			best:InputHoldBegin(); task.wait(best.HoldDuration + 0.05); best:InputHoldEnd()
-		end
-		status("[Chest] открываю: " .. best.Parent:GetFullName())
+		task.wait(0.3) -- дать игре включить промпт
+		local wasOn = best.Enabled
+		local function opened() return changed("chest", chest) or not best.Parent or (wasOn and not best.Enabled) end
+		local ok = replay("chest", chest) or usePrompt(best, opened)
+		status((ok and "[Chest] открыт: " or "[Chest] не открылся (откройте один руками — скрипт выучит): ")
+			.. chest:GetFullName() .. " | " .. best.ActionText)
 		task.wait(1.2)
 	end
 end
