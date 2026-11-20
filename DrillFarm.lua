@@ -50,7 +50,7 @@ local CONFIG = {
 	KillRadius      = 80,              -- Kill Aura: монстры в этом радиусе
 	GateRadius      = 1500,            -- как далеко искать ворота подземелья (летим к ним)
 	DungeonRadius   = 400,             -- Авто-данж: ищем монстров и сундуки в этом радиусе
-	KillHeight      = 1.5,             -- на сколько студов над макушкой монстра парим (сервер: до +2 работает; ниже — под землёй — не засчитывает)
+	KillHeight      = 1,             -- на сколько студов над макушкой монстра парим (сервер: до +2 работает; ниже — под землёй — не засчитывает)
 	KillTimeout     = 30,              -- сек на одного монстра
 
 	-- Подсветка
@@ -1100,6 +1100,7 @@ end
 -- Бьём монстров мечом, паря над макушкой монстра и глядя на него.
 local RunService = game:GetService("RunService")
 local killUp = CONFIG.KillHeight
+local upByName = {} -- найденная рабочая высота для каждого типа монстра (у крупных «макушка» для сервера ниже)
 local killSkip = setmetatable({}, { __mode = "k" })
 local Killing = false
 local lastSurface
@@ -1133,6 +1134,7 @@ local function killOne(m)
 	local h = m:FindFirstChild("Humanoid")
 	local tool = equipWeapon()
 	if not (h and tool) then killSkip[m] = os.clock() + 30; return end
+	killUp = upByName[m.Name] or CONFIG.KillHeight
 	local stand, base, mid = standUnder(m)
 	if not stand then return end
 	if not moveTo(m, function() return State.KillAura or State.Dungeon end, stand) then return end
@@ -1146,8 +1148,8 @@ local function killOne(m)
 		r.AssemblyLinearVelocity = Vector3.zero
 		r.CFrame = CFrame.lookAt(stand, mid)
 		swing(tool)
-		if h.Health < lastHp - 0.01 then lastHp, lastHit = h.Health, os.clock() end
-		if os.clock() - lastHit > 2.5 then -- урона нет: опускаемся ближе к монстру
+		if h.Health < lastHp - 0.01 then lastHp, lastHit = h.Health, os.clock(); upByName[m.Name] = killUp end
+		if os.clock() - lastHit > 1.2 then -- урона нет: опускаемся ближе к монстру
 			if killUp <= -3 then break end
 			killUp = killUp - 1
 			status("[Kill] нет урона — высота над макушкой " .. killUp)
@@ -1190,37 +1192,53 @@ end
 -- Вход в подземелье: летим к воротам DungeonGate_* и жмём их промпт.
 -- Вызывается ПЕРЕД зачисткой: пока рядом (в DungeonRadius) есть ворота, мы ещё снаружи — входим.
 local gateNext, gateSkip = 0, setmetatable({}, { __mode = "k" })
+-- у каждых ворот два промпта: "Enter" (вход, у ворот) и "Exit" (выход из данжа, внутри) — нужен только Enter
+local function enterPrompt(g)
+	for _, d in ipairs(g:GetDescendants()) do
+		if d:IsA("ProximityPrompt") and d.ActionText == CONFIG.GatePromptKey then return d end
+	end
+end
 local function enterGate()
 	if os.clock() < gateNext or bagFull() then return false end
 	gateNext = os.clock() + 8
 	local best, bd
 	for _, g in ipairs(workspace:GetChildren()) do
-		if g:IsA("Model") and string.sub(g.Name, 1, #CONFIG.GateName) == CONFIG.GateName and not g.Name:find("Tutorial") and (gateSkip[g] or 0) < os.clock() then
+		if g:IsA("Model") and string.sub(g.Name, 1, #CONFIG.GateName) == CONFIG.GateName and not g.Name:find("Tutorial")
+			and (gateSkip[g] or 0) < os.clock() then
 			local d = dist(g)
 			if d <= CONFIG.GateRadius and (not bd or d < bd) then best, bd = g, d end
 		end
 	end
 	if not best then return false end
 	local gp = pos(best)
-	if bd > 12 and not moveTo(best, function() return State.Dungeon end) then return true end
+	if bd > 40 and not moveTo(best, function() return State.Dungeon end) then return true end
 	pcall(function() player:RequestStreamAroundAsync(gp, 5) end)
-	-- ворота далеко не прогружены: ждём, пока появится промпт входа
+	-- ворота могли не прогрузиться: ждём промпт входа
 	local pr
 	for _ = 1, 20 do
-		for _, d in ipairs(best:GetDescendants()) do
-			if d:IsA("ProximityPrompt") then pr = d; break end
-		end
+		pr = enterPrompt(best)
 		if pr then break end
 		task.wait(0.25)
 	end
 	if not pr then
 		gateSkip[best] = os.clock() + 120
-		status("[Dungeon] у ворот нет промпта: " .. best.Name)
+		status("[Dungeon] у ворот нет промпта Enter: " .. best.Name)
 		return true
 	end
-	status("[Dungeon] вход: " .. best.Name)
-	usePrompt(pr)
-	task.wait(3)
+	local r = hrp()
+	local target = pr.Parent:IsA("Attachment") and pr.Parent.WorldPosition or pos(pr.Parent)
+	if r and target then r.CFrame = CFrame.new(target + Vector3.new(0, 3, 4)) end
+	task.wait(0.4)
+	status("[Dungeon] вход: " .. best.Name .. " (" .. tostring(pr.ObjectText) .. ")")
+	local from = r and r.Position
+	local function teleported() local c = hrp(); return c and from and (c.Position - from).Magnitude > 100 end
+	local ok = usePrompt(pr, teleported)
+	if not ok then -- запасной путь: Interact самой игры
+		local inter = knit("InteractionService", "Interact")
+		if inter then pcall(function() inter:InvokeServer(pr.Parent.Parent) end) end
+	end
+	for _ = 1, 20 do if teleported() then break end task.wait(0.25) end
+	status(teleported() and "[Dungeon] вошёл" or "[Dungeon] вход не сработал: " .. best.Name)
 	gateSkip[best] = os.clock() + 60 -- не входим в те же ворота сразу снова
 	return true
 end
