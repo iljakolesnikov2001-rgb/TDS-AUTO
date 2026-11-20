@@ -287,6 +287,16 @@ if hookmetamethod and getnamecallmethod then
 		if Running and (m == "InvokeServer" or m == "FireServer") and not (checkcaller and checkcaller()) then
 			local args = table.pack(...)
 			task.spawn(pcall, learnFrom, self, m, args)
+			if getgenv().DF_SPY then -- отладка: лог всех вызовов remote игрой
+				task.spawn(pcall, function()
+					local t = {}
+					for i = 1, args.n do
+						local v = args[i]
+						t[i] = typeof(v) == "Instance" and v:GetFullName() or typeof(v) == "table" and "{table}" or tostring(v)
+					end
+					status("[SPY] " .. self.Name .. ":" .. m .. "(" .. table.concat(t, ", ") .. ")")
+				end)
+			end
 		end
 		return old(self, ...)
 	end))
@@ -440,17 +450,29 @@ local function countTool(name)
 end
 
 ----------------------------------------------------------------- FEATURES
+local gameTool -- ниже (рядом со swing)
 local function equipPickaxe()
 	local c = player.Character
 	if not c then return end
-	local tool = c:FindFirstChildWhichIsA("Tool")
-	if tool and hasKey(tool.Name, {CONFIG.PickaxeName}) then return tool end
-	for _, t in ipairs(player.Backpack:GetChildren()) do
-		if t:IsA("Tool") and hasKey(t.Name, {CONFIG.PickaxeName}) then
-			c:FindFirstChildOfClass("Humanoid"):EquipTool(t)
-			return t
+	-- экипируем только через ToolService.EquipTool: сервер отвечает "Equip", и ToolController
+	-- игры создаёт объект кирки (ActiveTool). Humanoid:EquipTool этого не делает — удары не засчитываются.
+	local at = gameTool()
+	if at and at.Tool and at.Tool.Parent == c and hasKey(at.Tool.Name, {CONFIG.PickaxeName}) then return at.Tool end
+	local pick
+	for _, src in ipairs({ c, player.Backpack }) do
+		for _, t in ipairs(src:GetChildren()) do
+			if not pick and t:IsA("Tool") and hasKey(t.Name, {CONFIG.PickaxeName}) then pick = t end
 		end
 	end
+	local eq = knit("ToolService", "EquipTool")
+	if not (pick and eq) then return end
+	pcall(function() eq:InvokeServer(pick) end)
+	for _ = 1, 10 do
+		at = gameTool()
+		if at and at.Tool == pick then return pick end
+		task.wait(0.1)
+	end
+	return pick
 end
 
 -- Жилы: Part с атрибутами SessionOreType / OreLoaded (Workspace.Chunks...Nodes.Ore_Node*)
@@ -470,18 +492,18 @@ local function oreAlive(node)
 	return node.Parent and node:GetAttribute("OreLoaded") ~= false and node:FindFirstChild("Ore") ~= nil
 end
 
-local function swing(tool, target)
-	if tool then pcall(function() tool:Activate() end) end
-	local cam = workspace.CurrentCamera
-	local p = pos(target)
-	if cam and p then
-		local v, on = cam:WorldToViewportPoint(p)
-		if on then
-			VIM:SendMouseButtonEvent(v.X, v.Y, 0, true, game, 0)
-			task.wait(0.03)
-			VIM:SendMouseButtonEvent(v.X, v.Y, 0, false, game, 0)
-		end
-	end
+-- Удар киркой: зовём объект кирки самой игры (Knit ToolController.ActiveTool:Swing()).
+-- Он сам играет анимацию, ищет руду перед персонажем и шлёт ToolService.RE.Update.
+-- tool:Activate() не работает (у кирки нет Handle), ручная отправка Update сервер не засчитывает.
+local Knit
+pcall(function() Knit = require(RS.Packages.Knit) end)
+gameTool = function()
+	local ok, tc = pcall(function() return Knit.GetController("ToolController") end)
+	return ok and tc and tc.ActiveTool or nil
+end
+local function swing(tool)
+	local at = gameTool()
+	if at and at.Tool == tool and at.Swing then pcall(at.Swing, at) end
 end
 
 local pickupOresNear -- определяется ниже (после collect)
@@ -604,8 +626,15 @@ local function farmStep()
 			local cam = workspace.CurrentCamera
 			if cam then cam.CFrame = CFrame.lookAt(cam.CFrame.Position, p) end
 		end
-		swing(tool, ore)
-		task.wait(0.25)
+		swing(tool)
+		task.wait(0.2) -- кулдаун держит сама кирка (LastSwing)
+	end
+	status(("[Farm] %s: %s за %.1fс"):format(tostring(node:GetAttribute("SessionOreType")),
+		oreAlive(node) and "не добил" or "добыто", os.clock() - start))
+	if State.Farm and oreAlive(node) then
+		-- не добили (слабая кирка/монстр мешает) — 30 сек не возвращаемся, иначе крутимся на одной жиле
+		node:SetAttribute("_DF_Skip", true)
+		task.delay(30, function() if node.Parent then node:SetAttribute("_DF_Skip", nil) end end)
 	end
 	task.wait(0.4)
 	if State.Farm and not oreAlive(node) and pickupOresNear then pickupOresNear(p, 25) end
@@ -1546,5 +1575,6 @@ end
 getgenv().DF = { State = State, CONFIG = CONFIG, Learned = Learned, status = status, scan = scan,
 	groundItems = groundItems, pickupItem = pickupItem, grabSack = grabSack, chestStep = chestStep,
 	chestInfo = chestInfo, chestNode = chestNode, usePrompt = usePrompt, moveTo = moveTo, inventory = inventory,
+	oreNodes = oreNodes, farmStep = farmStep, oreAlive = oreAlive, equipPickaxe = equipPickaxe, bagUsage = bagUsage,
 	tryDrop = tryDrop, invEntries = invEntries, nearestSellPart = nearestSellPart, isMySack = isMySack, sellAll = sellAll }
 status("[DrillFarm] Загружен")
