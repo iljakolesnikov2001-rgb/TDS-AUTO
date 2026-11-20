@@ -631,20 +631,38 @@ end
 -- Мешок с деньгами: пробуем Pickup, касание и промпт, пока не исчезнет
 grabSack = function(it)
 	local pickup = knit("CarryInventoryService", "Pickup")
-	for _ = 1, 4 do
-		if not it.Parent then return true end
-		moveTo(it)
-		if pickup then pcall(function() pickup:InvokeServer(it) end) end
-		task.wait(0.3)
+	local interact = knit("InteractionService", "Interact")
+	local dragReq = knit("DragService", "Request")
+	local bag = it:FindFirstChild("Bag") or it:FindFirstChildWhichIsA("BasePart", true)
+	local sid = it:GetAttribute("SessionSnapshotItemId")
+	local tries = {
+		{ "Pickup(model)",   function() return pickup:InvokeServer(it) end },
+		{ "Pickup(bag)",     function() return pickup:InvokeServer(bag) end },
+		{ "Pickup(id)",      function() return pickup:InvokeServer(sid) end },
+		{ "Interact(model)", function() return interact:InvokeServer(it) end },
+		{ "Interact(bag)",   function() return interact:InvokeServer(bag) end },
+		{ "Drag(model)",     function() return dragReq:InvokeServer(it) end },
+		{ "touch",           function() for _, p in ipairs(it:GetDescendants()) do if p:IsA("BasePart") then touch(p) end end end },
+		{ "E",               function()
+			local cam = workspace.CurrentCamera
+			if cam and bag then cam.CFrame = CFrame.lookAt(cam.CFrame.Position, bag.Position) end
+			VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game); task.wait(0.1)
+			VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+		end },
+	}
+	moveTo(it)
+	for _, t in ipairs(tries) do
 		if not it.Parent then break end
-		for _, part in ipairs(it:GetDescendants()) do
-			if part:IsA("BasePart") then touch(part) end
+		local r = hrp()
+		if r and bag then r.CFrame = CFrame.new(bag.Position + Vector3.new(0, 2.5, 0)) end
+		pcall(t[2])
+		task.wait(0.5)
+		if not it.Parent then
+			status("[Sell] мешок подобран способом: " .. t[1])
+			return true
 		end
-		firePrompt(it)
-		task.wait(0.4)
 	end
-	if not it.Parent then status("[Sell] подобрал мешок с деньгами"); return true end
-	return false
+	return not it.Parent
 end
 
 sellAll = function(sellPart)
