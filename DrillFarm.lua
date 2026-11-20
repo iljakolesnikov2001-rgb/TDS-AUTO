@@ -43,6 +43,9 @@ local CONFIG = {
 	CorpseMaxValue  = 300,
 	BurnPromptKey   = "Burn",
 
+	-- Сундуки
+	ChestRadius     = 150,             -- открывать только незапертые сундуки в этом радиусе
+
 	-- Подсветка
 	MonsterFilter   = {},              -- пусто = все монстры
 	HighlightColor  = Color3.fromRGB(255, 60, 60),
@@ -61,7 +64,7 @@ local player   = Players.LocalPlayer
 local Running = true
 local Connections = {}
 local State = { Farm=false, Collect=false, Ammo=false, AutoBuy=false,
-                Fuel=false, Gate=false, Burn=false, Highlight=false }
+                Fuel=false, Gate=false, Burn=false, Highlight=false, Chests=false }
 
 ----------------------------------------------------------------- HELPERS
 local function hrp()
@@ -462,6 +465,26 @@ local function burnStep()
 	end
 end
 
+-- Сундуки: узел с SessionChestId; открываем только Locked=false и ChestOpenState=Idle
+local chestTried = setmetatable({}, { __mode = "k" })
+local function chestStep()
+	local list = {}
+	for _, d in ipairs(workspace:GetDescendants()) do
+		if d:GetAttribute("SessionChestId") and d:GetAttribute("Locked") == false
+			and d:GetAttribute("ChestOpenState") == "Idle" and (chestTried[d] or 0) < os.clock() then
+			table.insert(list, d)
+		end
+	end
+	local chest = nearest(list, CONFIG.ChestRadius)
+	if not chest then return end
+	chestTried[chest] = os.clock() + 20
+	if moveTo(chest, function() return State.Chests end) then
+		task.wait(0.2)
+		firePrompt(chest)
+		task.wait(1)
+	end
+end
+
 local function highlightStep()
 	local folder = workspace:FindFirstChild("Npc")
 	if not folder then return end
@@ -540,7 +563,7 @@ end
 local loops = {
 	Farm = farmStep, Collect = function() collectStep(false) end,
 	Ammo = function() collectStep(true) end, AutoBuy = autoBuyStep,
-	Fuel = fuelStep, Gate = gateStep, Burn = burnStep,
+	Fuel = fuelStep, Gate = gateStep, Burn = burnStep, Chests = chestStep,
 }
 for name, fn in pairs(loops) do
 	task.spawn(function()
@@ -823,6 +846,7 @@ action("Телепорт к дрели", function(b)
 end)
 section("Прочее")
 toggle("Burn", "Сжигание трупов")
+toggle("Chests", "Открывать сундуки")
 toggle("Highlight", "Подсветка монстров")
 section("Настройки")
 slider("Радиус поиска руды", "OreSearchRadius", 0, 500, 10)
