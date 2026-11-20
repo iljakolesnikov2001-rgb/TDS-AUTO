@@ -47,7 +47,7 @@ local CONFIG = {
 	MonsterFilter   = {},              -- пусто = все монстры
 	HighlightColor  = Color3.fromRGB(255, 60, 60),
 
-	MoveSpeed       = 45,              -- студов/сек при перелёте к предмету (меньше = безопаснее)
+	MoveSpeed       = 180,              -- студов/сек при перелёте к предмету (меньше = безопаснее)
 	PickupDelay     = 0.6,             -- пауза после подбора, сек
 	Tick            = 0.25,
 }
@@ -213,7 +213,7 @@ local function oreNodes()
 	local out, root = {}, workspace:FindFirstChild("Chunks") or workspace
 	for _, d in ipairs(root:GetDescendants()) do
 		local t = d:IsA("BasePart") and d:GetAttribute("SessionOreType")
-		if t and d:GetAttribute("OreLoaded") ~= false and d:FindFirstChild("Ore")
+		if t and d:GetAttribute("OreLoaded") ~= false and d:FindFirstChild("Ore") and not d:GetAttribute("_DF_Skip")
 			and (#CONFIG.OreNames == 0 or hasKey(t, CONFIG.OreNames)) then
 			table.insert(out, d)
 		end
@@ -261,14 +261,34 @@ local function farmStep()
 			radius = math.max(radius, math.max(part.Size.X, part.Size.Z) / 2 + 3)
 		end
 	end
-	local dir = Vector3.new(r.Position.X - p.X, 0, r.Position.Z - p.Z)
-	if dir.Magnitude < 0.1 then dir = Vector3.new(0, 0, 1) end
-	local stand = p + dir.Unit * radius
+	-- перебираем 12 точек вокруг камня, берём свободную (не в стене) ближайшую к игроку
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { player.Character, node }
-	local hit = workspace:Raycast(stand + Vector3.new(0, 15, 0), Vector3.new(0, -60, 0), params)
-	stand = (hit and hit.Position or Vector3.new(stand.X, p.Y, stand.Z)) + Vector3.new(0, 3, 0)
+	local op = OverlapParams.new()
+	op.FilterType = Enum.RaycastFilterType.Exclude
+	op.FilterDescendantsInstances = { player.Character, node }
+	local stand, best = nil, math.huge
+	for k = 0, 11 do
+		local a = k * math.pi / 6
+		local dir = Vector3.new(math.cos(a), 0, math.sin(a))
+		-- путь от руды до точки не перекрыт стеной
+		if not workspace:Raycast(p, dir * radius, params) then
+			local c = p + dir * radius
+			local hit = workspace:Raycast(c + Vector3.new(0, 4, 0), Vector3.new(0, -20, 0), params)
+			if hit then
+				local spot = hit.Position + Vector3.new(0, 3, 0)
+				local blocked = #workspace:GetPartBoundsInBox(CFrame.new(spot), Vector3.new(2, 4, 2), op) > 0
+				local d = (spot - r.Position).Magnitude
+				if not blocked and d < best then stand, best = spot, d end
+			end
+		end
+	end
+	if not stand then
+		print("[Farm] Нет свободного места у руды — пропуск")
+		node:SetAttribute("_DF_Skip", true)
+		return
+	end
 
 	if not moveTo(ore, function() return State.Farm end, stand) then return end
 	local tool = equipPickaxe()
