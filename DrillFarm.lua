@@ -2109,7 +2109,9 @@ local function idleChests(g)
 	local out, wave = {}, g and g:FindFirstChild("Wave")
 	local cn = wave and wave:FindFirstChild("ChestNodes")
 	for _, n in ipairs(cn and cn:GetChildren() or {}) do
-		if n:IsA("BasePart") and (n:GetAttribute("ChestOpenState") or "Idle") == "Idle" then table.insert(out, n) end
+		-- открытый сундук теряет промпт, а ChestOpenState может остаться Idle — считаем только с живым промптом
+		local pr = n:IsA("BasePart") and n:FindFirstChildWhichIsA("ProximityPrompt", true)
+		if pr and pr.Enabled and (n:GetAttribute("ChestOpenState") or "Idle") == "Idle" then table.insert(out, n) end
 	end
 	return out
 end
@@ -2595,7 +2597,7 @@ local dungeonFarmStep
 do
 local knownGates = getgenv and (getgenv().DF_KnownGates or {}) or {}
 if getgenv then getgenv().DF_KnownGates = knownGates end
-local farmedAt, farmFails = {}, {}
+local farmedAt, farmFails, farmTries = {}, {}, {}
 local function registerGates()
 	for _, g in ipairs(workspace:GetChildren()) do
 		if g:IsA("Model") and g.Name:sub(1, #CONFIG.GateName) == CONFIG.GateName and not g.Name:find("Tutorial") then
@@ -2641,8 +2643,15 @@ trackedDungeonRun = function()
 				farmedAt[k] = math.huge
 				status("[Данжи] пройден: " .. curGate.Name)
 			else
-				farmedAt[k] = os.clock() + 15
-				gateDone[k] = nil
+				-- не до конца (вышли по HP / сундук не открылся): ещё одна попытка, потом — пройден
+				farmTries[k] = (farmTries[k] or 0) + 1
+				if farmTries[k] >= 2 then
+					farmedAt[k] = math.huge
+					status("[Данжи] " .. curGate.Name .. ": 2 захода без полного прохода — пропускаю")
+				else
+					farmedAt[k] = os.clock() + 30
+					gateDone[k] = nil
+				end
 			end
 		end
 		curGate = nil
