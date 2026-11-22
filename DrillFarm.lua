@@ -64,6 +64,10 @@ local Connections = {}
 local State = { Auto=false, NoDrive=false, DungeonFarm=false, Farm=false, KillAura=false, Noclip=false, Highlight=false, SkipCutscenes=true }
 -- работает ли «мозг» (авто-фарм или фарм данжей) — по этому флагу продолжаются бой, укрытие, сбор
 local function busy() return State.Auto or State.DungeonFarm end
+if getgenv and getgenv().DF_PrevState then
+	for k, v in pairs(getgenv().DF_PrevState) do State[k] = v end
+	getgenv().DF_PrevState, getgenv().DF_Reloading = nil, nil
+end
 local Stats = { chests=0, items=0, kills=0, dungeons=0, upgrades=0, hides=0, refuels=0, sells=0, start=nil }
 local Phase = "Выключено"
 local function collecting() return busy() end
@@ -1938,17 +1942,33 @@ local function armorStep()
 	if w then wearItem(w) else status("[Gear] выброшенная броня не найдена: " .. name) end
 	return true
 end
-local function shopStep(center)
-	if os.clock() < shopNext then return false end
+-- far: ближайший магазин где угодно (летим туда, прогружаем), а не только у бура
+local function shopStep(center, far)
+	if not far and os.clock() < shopNext then return false end
 	shopNext = os.clock() + 10
 	local coins = call("CurrencyService", "GetCurrency")
 	if type(coins) ~= "number" or coins <= 0 then return false end
 	shopCoins = coins
 	local bp
 	for _, b in ipairs(CS:GetTagged("BuyPart")) do
-		if b:IsA("BasePart") and not b:GetFullName():find("CutScene", 1, true) and flat(b.Position, center) <= CONFIG.WorkRadius then bp = b end
+		if b:IsA("BasePart") and not b:GetFullName():find("CutScene", 1, true) then
+			local d = flat(b.Position, center)
+			if (far or d <= CONFIG.WorkRadius) and (not bp or d < flat(bp.Position, center)) then bp = b end
+		end
 	end
 	if not bp then return false end
+	if far then
+		-- товары грузятся только рядом: летим к кассе и ждём прогрузки
+		local r = hrp()
+		if r and (r.Position - bp.Position).Magnitude > 100 then
+			driveStop()
+			Phase = "Лечу в магазин"
+			r.AssemblyLinearVelocity = Vector3.zero
+			r.CFrame = CFrame.new(bp.Position + Vector3.new(0, 4, 8))
+			pcall(function() player:RequestStreamAroundAsync(bp.Position, 5) end)
+			task.wait(1)
+		end
+	end
 	local best, bestGain
 	for _, it in ipairs(workspace.Items:GetChildren()) do
 		local cost = it:GetAttribute("Cost")
@@ -2015,6 +2035,15 @@ local function shopStep(center)
 	end)
 	Moving = false
 	return true
+end
+-- поход в дальний магазин: покупаем всё нужное за один заход
+local function farShop(center)
+	local any = false
+	for _ = 1, 8 do
+		if not shopStep(center, true) then break end
+		any = true
+	end
+	return any
 end
 
 -- Подземелья. Модели ворот перезагружаются (streaming), поэтому «пройденные» помним по позиции.
@@ -2368,6 +2397,12 @@ local function drillStuck(dp)
 end
 
 local hordeFight = false
+local farShopNext = 0
+local coinsAt2, coinsVal2 = 0, nil
+local function coinsCache2()
+	if os.clock() - coinsAt2 > 5 then coinsAt2 = os.clock(); local c = call("CurrencyService", "GetCurrency"); if type(c) == "number" then coinsVal2 = c end end
+	return coinsVal2
+end
 local farSellNext = 0
 local trackedDungeonRun, noDriveIdle -- ниже (раздел DUNGEON FARM)
 local wallSeen, wallHitAt = setmetatable({}, { __mode = "k" }), 0
@@ -2378,6 +2413,11 @@ local function autoStep()
 	if not inDungeon() and deathChestStep() then return end
 	if hpPct() < CONFIG.GuardHpPct then
 		if inDungeon() then exitDungeon("мало HP") end
+		-- аптечек нет, а монеты есть — в ближайший магазин за бинтами (быстрее, чем ждать регенерацию)
+		if not inDungeon() and #medkits() == 0 and os.clock() > farShopNext and (coinsCache2() or 0) >= 10 then
+			farShopNext = os.clock() + 60
+			if farShop(hrp() and hrp().Position or Vector3.zero) then heal(CONFIG.SafeHpPct); return end
+		end
 		local d0 = getDrill()
 		local f0 = d0 and d0:GetAttribute(CONFIG.FuelAttr) or 0
 		if not State.NoDrive and hpPct() >= 35 and not poisoned() and d0 and f0 >= CONFIG.DriveMinFuel and not drillStuck(pos(d0))
@@ -2518,6 +2558,11 @@ local function autoStep()
 		if sellStep(dp, true) then return end
 	end
 	if shopStep(dp) then return end
+	-- раз в 5 минут, если монет много: дальний магазин за снаряжением/аптечками получше
+	if os.clock() > farShopNext and (coinsCache2() or 0) >= 500 then
+		farShopNext = os.clock() + 300
+		if farShop(dp) then return end
+	end
 	if armorStep() then Phase = "Надеваю броню"; return end
 	if upgradeStep() then Phase = "Прокачка бура"; return end
 
@@ -3353,6 +3398,11 @@ local function shutdown()
 	pcall(function() if driveStarted then driveStop() end end)
 	pcall(function() local r = hrp(); if r then r.Anchored = false end end)
 	pcall(function() game:GetService("ContextActionService"):UnbindAction("DF_MenuWheel") end)
+	-- горячая перезагрузка (DF_Reloading): запомнить режимы, чтобы новая копия сразу продолжила —
+	-- иначе персонаж секунды стоит без защиты (так погиб на 46% HP у орды)
+	if getgenv and getgenv().DF_Reloading then
+		getgenv().DF_PrevState = { Auto = State.Auto, NoDrive = State.NoDrive, DungeonFarm = State.DungeonFarm }
+	end
 	for k in pairs(State) do State[k] = false end
 	for _, c in ipairs(Connections) do c:Disconnect() end
 	for _, d in ipairs(workspace:GetDescendants()) do
