@@ -1701,6 +1701,56 @@ local function lootStep(center, radius, fuelOnly)
 	return true
 end
 
+-- Переплавка: железная/золотая руда, брошенная в центр печи-кемпинга (FurnaceCampsite → OreConvertBox, тег ItemSwap),
+-- становится слитком: Iron Ore → IronBar 150, Gold Ore → GoldBar 300. Печь-кемпинг есть не у каждой крепости.
+local smeltOres = { Ore_Iron = true, Ore_Gold = true }
+local function smeltStep()
+	local camp = workspace:FindFirstChild("FurnaceCampsite")
+	local list = {}
+	for _, e in ipairs(invEntries()) do if smeltOres[e.Name] then table.insert(list, e) end end
+	if not camp or #list == 0 then return false end
+	local drop = knit("CarryInventoryService", "DropGroup")
+	if not drop then return false end
+	Phase = ("Переплавка руды (%d)"):format(#list)
+	driveStop()
+	local r = hrp()
+	if not r then return false end
+	r.AssemblyLinearVelocity = Vector3.zero
+	r.CFrame = CFrame.new(camp:GetPivot().Position + Vector3.new(0, 8, 0))
+	pcall(function() player:RequestStreamAroundAsync(camp:GetPivot().Position, 5) end)
+	local box
+	for _ = 1, 20 do
+		box = camp:FindFirstChild("OreConvertBox", true)
+		if box then break end
+		task.wait(0.25)
+	end
+	if not box then status("[Smelt] печь не прогрузилась"); return false end
+	local before = {}
+	for _, it in ipairs(workspace.Items:GetChildren()) do before[it] = true end
+	local function center()
+		local c = hrp()
+		if c then c.AssemblyLinearVelocity = Vector3.zero; c.CFrame = box.CFrame end -- ровно в центр: с края руда падает мимо
+	end
+	Moving = true
+	for _, e in ipairs(list) do
+		for _ = 1, 3 do center(); task.wait(0.1) end
+		pcall(function() drop:InvokeServer(e.Id) end)
+		for _ = 1, 6 do center(); task.wait(0.1) end
+	end
+	for _ = 1, 15 do center(); task.wait(0.1) end
+	Moving = false
+	-- забрать слитки (и руду, если какая-то упала мимо)
+	local bars = 0
+	for _, it in ipairs(workspace.Items:GetChildren()) do
+		local pp = not before[it] and pos(it)
+		if pp and (pp - box.Position).Magnitude < 30 and it:GetAttribute("SessionSnapshotItemId") then
+			if moveTo(it, nil) then task.wait(0.15); if pickupItem(it) and it.Name:find("Bar") then bars += 1 end end
+		end
+	end
+	status(("[Smelt] переплавлено: %d руды → %d слитков"):format(#list, bars))
+	return true
+end
+
 -- Продажа: сумка заполнена и рядом с буром есть стол продажи
 local sellNext = 0
 local function sellStep(center, force)
@@ -1714,6 +1764,7 @@ local function sellStep(center, force)
 		if (force or d <= CONFIG.WorkRadius) and (not bd or d < bd) then best, bd = sp, d end
 	end
 	if not best then return false end
+	pcall(smeltStep) -- руду — в слитки перед продажей (слитки дороже)
 	Phase = "Продажа"
 	driveStop()
 	if not clearAround(best.Position, 30) then return false end
@@ -3185,6 +3236,6 @@ getgenv().DF = { State = State, CONFIG = CONFIG, Stats = Stats, status = status,
 	drive = drive, driveStop = driveStop, refuel = refuel, fuelPct = fuelPct, fuelTools = fuelTools,
 	upgradeStep = upgradeStep, skipCutscene = skipCutscene, autoStep = autoStep, lootStep = lootStep,
 	gateNear = gateNear, enterGate = enterGate, exitDungeon = exitDungeon, dungeonRun = dungeonRun,
-	finalWallAhead = finalWallAhead, shopStep = shopStep, armorStep = armorStep, phase = function() return Phase end }
+	finalWallAhead = finalWallAhead, shopStep = shopStep, armorStep = armorStep, smeltStep = smeltStep, phase = function() return Phase end }
 status("[DrillFarm] Загружен")
 end)()
