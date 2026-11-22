@@ -2389,23 +2389,20 @@ end
 
 -- Бур едет быстрее мобов (~30 st/с против ~16): от мобов у бура выгоднее уехать, чем драться/прятаться.
 -- «Застрял» — за рулём, но за 4 с почти не сдвинулись (упёрлись в стену/скалу) — тогда уже бой.
-local progX, progAt = nil, 0
+-- мелкое состояние авто-фарма одной таблицей (у Luau лимит 200 локальных в файле)
+local AS = { progAt = 0, farShopNext = 0, coinsAt2 = 0, farSellNext = 0, fogSellNext = 0, wallHitAt = 0, hordeFight = false }
 local function drillStuck(dp)
-	if not driveStarted then progX, progAt = dp, os.clock(); return false end
-	if not progX or (dp - progX).Magnitude > 6 then progX, progAt = dp, os.clock(); return false end
-	return os.clock() - progAt > 4
+	if not driveStarted then AS.progX, AS.progAt = dp, os.clock(); return false end
+	if not AS.progX or (dp - AS.progX).Magnitude > 6 then AS.progX, AS.progAt = dp, os.clock(); return false end
+	return os.clock() - AS.progAt > 4
 end
 
-local hordeFight = false
-local farShopNext = 0
-local coinsAt2, coinsVal2 = 0, nil
 local function coinsCache2()
-	if os.clock() - coinsAt2 > 5 then coinsAt2 = os.clock(); local c = call("CurrencyService", "GetCurrency"); if type(c) == "number" then coinsVal2 = c end end
-	return coinsVal2
+	if os.clock() - AS.coinsAt2 > 5 then AS.coinsAt2 = os.clock(); local c = call("CurrencyService", "GetCurrency"); if type(c) == "number" then AS.coinsVal2 = c end end
+	return AS.coinsVal2
 end
-local farSellNext = 0
 local trackedDungeonRun, noDriveIdle -- ниже (раздел DUNGEON FARM)
-local wallSeen, wallHitAt = setmetatable({}, { __mode = "k" }), 0
+AS.wallSeen = setmetatable({}, { __mode = "k" })
 local function autoStep()
 	if not alive() then Phase = "Ждём возрождения"; return end
 	if workspace:GetAttribute("InCutScene") == true then Phase = "Катсцена"; return end
@@ -2414,13 +2411,14 @@ local function autoStep()
 	if hpPct() < CONFIG.GuardHpPct then
 		if inDungeon() then exitDungeon("мало HP") end
 		-- аптечек нет, а монеты есть — в ближайший магазин за бинтами (быстрее, чем ждать регенерацию)
-		if not inDungeon() and #medkits() == 0 and os.clock() > farShopNext and (coinsCache2() or 0) >= 10 then
-			farShopNext = os.clock() + 60
+		if not inDungeon() and #medkits() == 0 and os.clock() > AS.farShopNext and (coinsCache2() or 0) >= 10 then
+			AS.farShopNext = os.clock() + 60
 			if farShop(hrp() and hrp().Position or Vector3.zero) then heal(CONFIG.SafeHpPct); return end
 		end
 		local d0 = getDrill()
 		local f0 = d0 and d0:GetAttribute(CONFIG.FuelAttr) or 0
 		if not State.NoDrive and hpPct() >= 35 and not poisoned() and d0 and f0 >= CONFIG.DriveMinFuel and not drillStuck(pos(d0))
+			and #enemies(16, pos(d0)) == 0 and #enemies(12) == 0
 			and not finalWallAhead(pos(d0)) then
 			heal(CONFIG.GuardHpPct)
 			Phase = "Мало HP — уезжаю от мобов"
@@ -2469,19 +2467,19 @@ local function autoStep()
 		if fp < 85 and os.clock() > refuelNext and (#fuelTools() > 0 or #corpses() > 0) then Phase = "Заправка перед стеной"; refuel(); return end
 		local function track()
 			local h = wall:GetAttribute("Health") or 0
-			if not wallSeen[wall] then wallSeen[wall] = h
-			elseif h < wallSeen[wall] then wallSeen[wall], wallHitAt = h, os.clock() end
+			if not AS.wallSeen[wall] then AS.wallSeen[wall] = h
+			elseif h < AS.wallSeen[wall] then AS.wallSeen[wall], AS.wallHitAt = h, os.clock() end
 			return h
 		end
 		track()
-		if os.clock() - wallHitAt < 4 then
+		if os.clock() - AS.wallHitAt < 4 then
 			Phase = ("Бур ломает стену сам (%s HP) — жду в укрытии"):format(tostring(wall:GetAttribute("Health")))
 			hide("бур ломает стену", function()
 				local h = track()
 				Phase = ("Бур ломает стену сам (%d HP, топливо %d%%) — жду в укрытии"):format(math.floor(h), math.floor(fuelPct()))
 				-- топливо кончается, а заправиться есть чем — выходим заправить
 				if fuelPct() < 25 and (#fuelTools() > 0 or #corpses() > 0) then return false end
-				return wall.Parent ~= nil and h > 0 and os.clock() - wallHitAt < 4 and fuelPct() > 3
+				return wall.Parent ~= nil and h > 0 and os.clock() - AS.wallHitAt < 4 and fuelPct() > 3
 			end)
 			return
 		end
@@ -2494,7 +2492,8 @@ local function autoStep()
 	-- монстры у бура: пока они рядом, они бьют и водителя (и того, кто заправляет) — сначала разбираемся с ними
 	local near = enemies(45, dp)
 	-- уезжаем от толпы или когда HP мало; 1–3 моба при хорошем HP быстрее убить (они всё равно догоняют)
-	if #near > 0 and not State.NoDrive and (#near >= 4 or hpPct() < 70) and fuel >= CONFIG.DriveMinFuel and not drillStuck(dp) and not gateNear(dp) then
+	-- уезжаем только от орды и только если никто не сидит на самом буре (такой едет вместе с нами)
+	if #near >= 4 and not State.NoDrive and #enemies(16, dp) == 0 and fuel >= CONFIG.DriveMinFuel and not drillStuck(dp) and not gateNear(dp) then
 		heal(70)
 		Phase = ("Уезжаю от мобов (%d)"):format(#near)
 		drive()
@@ -2505,8 +2504,8 @@ local function autoStep()
 	-- бьём самого отбившегося от толпы, при HP < Guard уходим в укрытие до SafeHp и повторяем
 	if #near >= 4 then
 		if hpPct() < CONFIG.SafeHpPct + 10 and heal(CONFIG.SafeHpPct + 10) then return end
-		if hpPct() >= CONFIG.SafeHpPct + 10 then hordeFight = true end
-		if not hordeFight then Phase = ("Орда (%d): восстанавливаюсь"):format(#near); hide("орда у бура: " .. #near); return end
+		if hpPct() >= CONFIG.SafeHpPct + 10 then AS.hordeFight = true end
+		if not AS.hordeFight then Phase = ("Орда (%d): восстанавливаюсь"):format(#near); hide("орда у бура: " .. #near); return end
 		Phase = ("Орда (%d): бью по одному"):format(#near)
 		driveStop()
 		-- самый высокий (Goblin Brute) — встаём ему на макушку и бьём сверху: мелкие гоблины туда не достают
@@ -2530,10 +2529,10 @@ local function autoStep()
 			end
 			hordeKill(best, c)
 		end
-		if hpPct() < CONFIG.GuardHpPct + 5 then hordeFight = false end
+		if hpPct() < CONFIG.GuardHpPct + 5 then AS.hordeFight = false end
 		return
 	end
-	hordeFight = false
+	AS.hordeFight = false
 	if #near > 0 then
 		-- сидеть за рулём под ударами нельзя: либо бой (HP хватает), либо укрытие
 		if hpPct() < CONFIG.GuardHpPct then Phase = "Укрытие (мобы у бура)"; hide("мобы у бура"); return end
@@ -2549,18 +2548,26 @@ local function autoStep()
 
 	if os.clock() > refuelNext and ((fp < CONFIG.FuelTargetPct and (#fuelTools() > 0 or #corpses() > 0)) or (fp < 90 and #corpses() >= 3)) then Phase = "Заправка"; refuel(); return end
 	if sellStep(dp) then return end
+	-- ивент Money Fog (Lighting.Event = "MoneyFog"): продажа выгоднее — сбываем всё сразу, на ближайшем столе
+	if game:GetService("Lighting"):GetAttribute("Event") == "MoneyFog" and os.clock() > AS.fogSellNext then
+		if (bagUsage() or 0) > 0 then
+			AS.fogSellNext = os.clock() + 20
+			status("[Sell] Money Fog — продаю всё")
+			if sellStep(dp, true) then return end
+		end
+	end
 	-- сумка почти полна, а стола рядом нет — летим к ближайшему столу продажи, где бы он ни был
 	local bn, bc = bagUsage()
 	-- без вождения бур ведёт другой — продаём уже с обычного порога
 	local farPct = State.NoDrive and CONFIG.SellAtPct or CONFIG.SellFarPct
-	if bn and bc and bc > 0 and bn / bc * 100 >= farPct and os.clock() > farSellNext then
-		farSellNext = os.clock() + 60
+	if bn and bc and bc > 0 and bn / bc * 100 >= farPct and os.clock() > AS.farSellNext then
+		AS.farSellNext = os.clock() + 60
 		if sellStep(dp, true) then return end
 	end
 	if shopStep(dp) then return end
 	-- раз в 5 минут, если монет много: дальний магазин за снаряжением/аптечками получше
-	if os.clock() > farShopNext and (coinsCache2() or 0) >= 500 then
-		farShopNext = os.clock() + 300
+	if os.clock() > AS.farShopNext and (coinsCache2() or 0) >= 500 then
+		AS.farShopNext = os.clock() + 300
 		if farShop(dp) then return end
 	end
 	if armorStep() then Phase = "Надеваю броню"; return end
@@ -2569,7 +2576,13 @@ local function autoStep()
 	if not State.NoDrive and pitStep(dp, 200) then return end
 	local g, key = gateNear(dp)
 	if g then
-		if hpPct() < CONFIG.SafeHpPct then driveStop(); Phase = "Жду HP перед подземельем"; return end
+		-- ждать HP на месте нельзя — бьют; лечимся аптечкой, иначе ждём в укрытии
+		if hpPct() < CONFIG.SafeHpPct then
+			if heal(CONFIG.SafeHpPct) then return end
+			Phase = "Жду HP перед подземельем (в укрытии)"
+			hide("жду HP перед подземельем", function() return hpPct() < CONFIG.SafeHpPct end)
+			return
+		end
 		Phase = "Вход в подземелье"; enterGate(g, key); return
 	end
 
@@ -2597,7 +2610,12 @@ local function autoStep()
 
 	local w = finalWallAhead(dp)
 	if w and not wallReady[w] then
-		if hpPct() < CONFIG.SafeHpPct then driveStop(); Phase = "Перед финальной стеной: жду HP"; return end
+		if hpPct() < CONFIG.SafeHpPct then
+			if heal(CONFIG.SafeHpPct) then return end
+			Phase = "Перед финальной стеной: жду HP (в укрытии)"
+			hide("жду HP перед финальной стеной", function() return hpPct() < CONFIG.SafeHpPct end)
+			return
+		end
 		wallReady[w] = true
 		status("[Auto] финальная стена — ломаем (будет волна врагов)")
 	end
