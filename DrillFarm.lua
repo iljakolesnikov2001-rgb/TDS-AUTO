@@ -14,6 +14,7 @@ local CONFIG = {
 	FuelSearchRadius = 500,  -- топливо почти кончилось, канистр нет — ищем дальше
 	DriveMinFuel     = 3,
 	MedkitStock      = 6,     -- держать аптечек в запасе (покупаются в магазине крепости)
+	SellFarPct       = 85,   -- сумка заполнена на N% — продаём даже на дальнем столе
 	SellAtPct        = 70,   -- продаём, когда сумка заполнена на N% и стол продажи рядом с буром
 	DungeonRadius    = 250,  -- в подземелье: монстры/сундуки/лут в этом радиусе
 	KillRadius       = 80,   -- Kill Aura
@@ -2218,6 +2219,7 @@ local function drillStuck(dp)
 end
 
 local hordeFight = false
+local farSellNext = 0
 local trackedDungeonRun, noDriveIdle -- ниже (раздел DUNGEON FARM)
 local wallSeen, wallHitAt = setmetatable({}, { __mode = "k" }), 0
 local function autoStep()
@@ -2358,6 +2360,14 @@ local function autoStep()
 
 	if os.clock() > refuelNext and ((fp < CONFIG.FuelTargetPct and (#fuelTools() > 0 or #corpses() > 0)) or (fp < 90 and #corpses() >= 3)) then Phase = "Заправка"; refuel(); return end
 	if sellStep(dp) then return end
+	-- сумка почти полна, а стола рядом нет — летим к ближайшему столу продажи, где бы он ни был
+	local bn, bc = bagUsage()
+	-- без вождения бур ведёт другой — продаём уже с обычного порога
+	local farPct = State.NoDrive and CONFIG.SellAtPct or CONFIG.SellFarPct
+	if bn and bc and bc > 0 and bn / bc * 100 >= farPct and os.clock() > farSellNext then
+		farSellNext = os.clock() + 60
+		if sellStep(dp, true) then return end
+	end
 	if shopStep(dp) then return end
 	if armorStep() then Phase = "Надеваю броню"; return end
 	if upgradeStep() then Phase = "Прокачка бура"; return end
