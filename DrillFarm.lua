@@ -2510,16 +2510,16 @@ AS.wallSeen = setmetatable({}, { __mode = "k" })
 	end
 	AS.saveSelection = selection
 
-	-- бур не продвигается CONFIG.SaveGearStallMin минут — уносим лучшее через ближайший алтарь
+	-- бур не продвигается CONFIG.SaveGearStallMin минут — сохраняем лучшее (сразу, без алтаря)
 	AS.saveStep = function(dp)
 		if not CONFIG.SaveGearOnStall or State.NoDrive then return false end
 		-- бур едет или ломает финальную стену (её HP падает) — это прогресс
 		if not AS.stallX or math.abs(dp.X - AS.stallX) > 60 or os.clock() - AS.wallHitAt < 60 then AS.stallX, AS.stallAt = dp.X, os.clock(); return false end
 		if os.clock() - AS.stallAt < CONFIG.SaveGearStallMin * 60 or os.clock() < (AS.saveNext or 0) then return false end
 		AS.saveNext = os.clock() + 120
-		Phase = "Бур не продвигается — сохраняю вещи на алтаре"
-		status(("[Save] бур стоит %d мин — ищу алтарь Save Gear"):format(CONFIG.SaveGearStallMin))
-		AS.saveNow(dp)
+		Phase = "Бур не продвигается — сохраняю вещи"
+		status(("[Save] бур стоит %d мин — сохраняю вещи"):format(CONFIG.SaveGearStallMin))
+		AS.saveNow(dp, true)
 		return true
 	end
 	-- лететь к ближайшему алтарю, сохранить лучшие вещи (сервер завершает заход и кидает в лобби); true = SaveGear вызван
