@@ -1073,7 +1073,8 @@ end
 local function corpses()
 	local inv, out = inventory(), {}
 	for _, e in pairs(inv and inv.Entries or {}) do
-		if type(e) == "table" and e.Category == "Corpse" and e.Id then table.insert(out, e) end
+		-- дорогие трупы (Bandit Miner 380) — на продажу; в печь только при почти пустом баке
+		if type(e) == "table" and e.Category == "Corpse" and e.Id and ((e.Value or 0) < 50 or fuelPct() < 20) then table.insert(out, e) end
 	end
 	return out
 end
@@ -1656,8 +1657,9 @@ local function lootStep(center, radius, fuelOnly)
 			local isFuel = it:GetAttribute("Category") == "Fuel" or it:GetAttribute("Category") == "Corpse"
 			local want
 			if it:GetAttribute("ItemDatabaseId") == "Money_Sack" then want = not fuelOnly and isMySack(it)
-			-- трупы — мелкое топливо (5) и место в сумке: берём, только пока бак не почти полон
-			elseif it:GetAttribute("Category") == "Corpse" then want = not full and fuelPct() < 85
+			-- трупы: топливо (5–10) и товар (гоблин 10, Bandit Miner 380): берём для бака или если дорогие
+			elseif it:GetAttribute("Category") == "Corpse" then
+				want = not full and (fuelPct() < 85 or (it:GetAttribute("Value") or 0) >= 50)
 			elseif fuelOnly then want = isFuel and not full
 			else want = not full and (isFuel or ((it:GetAttribute("Value") or 0) >= CONFIG.ItemsMinValue
 				and not hasKey(name, CONFIG.IgnoredItems)))
