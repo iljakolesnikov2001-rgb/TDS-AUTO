@@ -540,6 +540,8 @@ gameTool = function()
 end
 local function swing(tool)
 	local at = gameTool()
+	-- +3 st к дальности: удар считает клиент, сервер пропускает примерно до 17–18 st (проверено), дальше — нет
+	if holds(at, tool) and at.Range and not at._dfRange then at._dfRange = true; at.Range = at.Range + 3 end
 	if holds(at, tool) and at.Swing then pcall(at.Swing, at) end
 end
 
@@ -1415,7 +1417,7 @@ local function hordeKill(m, center)
 	local tool = weaponFor(m)
 	if not (h and tool) then return end
 	-- у каждого оружия своя дальность (атрибут Range); встаём чуть ближе предела
-	local range = math.max(5, (tool:GetAttribute("Range") or 12) - 2)
+	local range = math.max(5, (tool:GetAttribute("Range") or 12) + 1) -- +3 из swing, минус запас 2
 	local t0, hp, last = os.clock(), h.Health, os.clock()
 	local fallback = false
 	Moving = true
