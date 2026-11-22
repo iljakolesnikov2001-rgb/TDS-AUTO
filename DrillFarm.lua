@@ -670,6 +670,7 @@ end
 -- Предметы лежат в Workspace.Items (атрибуты Value, Category, DisplayName)
 -- Предметы на земле: Workspace.Items + лут (атрибут SessionSnapshotItemId), не на персонажах
 local skipUntil = setmetatable({}, { __mode = "k" })
+local skipIds = {} -- SessionSnapshotItemId -> до какого времени не трогать
 local function groundItems()
 	local out, seen = {}, {}
 	local folder = workspace:FindFirstChild("Items")
@@ -1647,7 +1648,10 @@ local function lootStep(center, radius, fuelOnly)
 	local best, bd
 	for _, it in ipairs(groundItems()) do
 		local p = pos(it)
-		if p and (p - center).Magnitude <= radius and (skipUntil[it] or 0) < os.clock() and (dungeonActive or not inZone(p)) then
+		local sid = it:GetAttribute("SessionSnapshotItemId")
+		-- AdventureQuestProtected (напр. труп босса Simon) поднять нельзя; неудачи помним по ID — объект пересоздаётся
+		if p and (p - center).Magnitude <= radius and (skipUntil[it] or 0) < os.clock() and (dungeonActive or not inZone(p))
+			and not it:GetAttribute("AdventureQuestProtected") and (not sid or (skipIds[sid] or 0) < os.clock()) then
 			local name = it:GetAttribute("DisplayName") or it.Name
 			local isFuel = it:GetAttribute("Category") == "Fuel" or it:GetAttribute("Category") == "Corpse"
 			local want
@@ -1685,6 +1689,8 @@ local function lootStep(center, radius, fuelOnly)
 			task.wait(CONFIG.PickupDelay)
 		else
 			skipUntil[best] = os.clock() + 60
+			local sid = best:GetAttribute("SessionSnapshotItemId")
+			if sid then skipIds[sid] = os.clock() + 300 end
 			status("[Loot] не поднялся: " .. name)
 		end
 	else
@@ -2159,6 +2165,7 @@ local function drillStuck(dp)
 end
 
 local hordeFight = false
+local trackedDungeonRun, noDriveIdle -- ниже (раздел DUNGEON FARM)
 local wallSeen, wallHitAt = setmetatable({}, { __mode = "k" }), 0
 local function autoStep()
 	if not alive() then Phase = "Ждём возрождения"; return end
@@ -2183,7 +2190,7 @@ local function autoStep()
 		end
 		Phase = "Мало HP, мобов нет — еду дальше"
 	end
-	if inDungeon() then return dungeonRun() end
+	if inDungeon() then return trackedDungeonRun() end
 
 	local drill = getDrill()
 	local me = hrp()
@@ -2338,6 +2345,7 @@ local function autoStep()
 	end
 	if State.NoDrive then
 		-- без вождения: бур ведёт кто-то другой — держимся на буре, чтобы не отстать
+		if noDriveIdle(dp) then return end
 		Phase = "Без вождения: жду дел у бура"
 		local r = hrp()
 		if r and (r.Position - dp).Magnitude > 40 then
@@ -2457,66 +2465,41 @@ local function sweepPath()
 	swept = true
 end
 
-local function dungeonFarmStep()
-	if State.Auto then State.DungeonFarm = false; return end
-	if not alive() then Phase = "Ждём возрождения"; return end
-	if workspace:GetAttribute("InCutScene") == true then Phase = "Катсцена"; return end
-	if heal(60) then return end
-	if hpPct() < CONFIG.GuardHpPct then
-		if inDungeon() then exitDungeon("мало HP") end
-		Phase = "Укрытие (мало HP)"; hide("мало HP"); return
-	end
-	if inDungeon() then
-		dungeonRun()
-		-- вышли: данж пройден, если волна завершена и сундуков не осталось (иначе — вернёмся, напр. после укрытия)
-		if not inDungeon() and curGate then
-			local k = gateKey(curGate)
-			local wave = curGate:FindFirstChild("Wave")
-			if k then
-				if (not wave or wave:GetAttribute("WaveCompleted") == true) and #idleChests(curGate) == 0 then
-					farmedAt[k] = math.huge
-					status("[Данжи] пройден: " .. curGate.Name)
-				else
-					farmedAt[k] = os.clock() + 15
-				end
+-- проход данжа с учётом: вышли — данж пройден, если волна завершена и сундуков не осталось
+-- (иначе, напр. после выхода по низкому HP, — вернёмся)
+trackedDungeonRun = function()
+	dungeonRun()
+	if not inDungeon() and curGate then
+		local k = gateKey(curGate)
+		local wave = curGate:FindFirstChild("Wave")
+		if k then
+			if (not wave or wave:GetAttribute("WaveCompleted") == true) and #idleChests(curGate) == 0 then
+				farmedAt[k] = math.huge
+				status("[Данжи] пройден: " .. curGate.Name)
+			else
+				farmedAt[k] = os.clock() + 15
+				gateDone[k] = nil
 			end
 		end
-		return
+		curGate = nil
 	end
-	if deathChestStep() then return end
-	driveStop()
-	if armorStep() then Phase = "Надеваю броню"; return end
-	local r = hrp()
-	if not r then return end
-	-- сумка почти полна — продать на ближайшем столе
-	local n, cap = bagUsage()
-	if n and cap and cap > 0 and n / cap * 100 >= CONFIG.SellAtPct and sellStep(r.Position, true) then return end
-	if not swept then sweepPath(); return end
+end
 
-	local d = getDrill()
-	local maxX = (d and pos(d) or r.Position).X + 150 -- только открытая территория (до бура)
+-- ближайший непройденный данж из известных, подходящий под фильтр
+local function pickGate(from, ok)
 	local best, bk, bd
 	for k, g in pairs(knownGates) do
-		if g.pos.X <= maxX and (farmedAt[k] or 0) ~= math.huge and os.clock() >= (farmedAt[k] or 0) and (farmFails[k] or 0) < 3 then
-			local dd = (g.pos - r.Position).Magnitude
+		if ok(g) and (farmedAt[k] or 0) ~= math.huge and os.clock() >= (farmedAt[k] or 0) and (farmFails[k] or 0) < 3 then
+			local dd = (g.pos - from).Magnitude
 			if not bd or dd < bd then best, bk, bd = g, k, dd end
 		end
 	end
-	if not best then
-		local left = 0
-		for k, g in pairs(knownGates) do
-			if g.pos.X <= maxX and farmedAt[k] ~= math.huge and (farmFails[k] or 0) < 3 then left += 1 end
-		end
-		if left == 0 then
-			status("[Данжи] все данжи в открытой территории пройдены — фарм данжей выключен")
-			State.DungeonFarm = false
-		end
-		Phase = "Данжи: жду"
-		task.wait(1)
-		return
-	end
+	return best, bk
+end
+
+-- долететь до ворот, дождаться прогрузки и войти
+local function farmGate(best, bk, r)
 	Phase = "Лечу к данжу: " .. best.name
-	-- к воротам: над ними, ждём прогрузки модели
 	r.AssemblyLinearVelocity = Vector3.zero
 	r.CFrame = CFrame.new(best.pos + Vector3.new(0, 6, 0))
 	pcall(function() player:RequestStreamAroundAsync(best.pos, 5) end)
@@ -2535,8 +2518,7 @@ local function dungeonFarmStep()
 		status("[Данжи] уже пройден: " .. g.Name)
 		return
 	end
-	-- сундуки и мобы у входа
-	if chestStep(best.pos, 150) then return end
+	if chestStep(best.pos, 150) then return end -- сундуки у входа
 	gateDone[bk], gateTries[bk] = nil, 0
 	enterGate(g, bk)
 	if not inDungeon() then
@@ -2544,6 +2526,63 @@ local function dungeonFarmStep()
 		farmedAt[bk] = os.clock() + 20
 		status(("[Данжи] %s: вход не сработал (попытка %d)"):format(best.name, farmFails[bk]))
 	end
+end
+
+-- Без вождения, когда дел у бура нет: данжи рядом с буром, потом руда у бура
+noDriveIdle = function(dp)
+	local r = hrp()
+	if not r then return false end
+	if hpPct() >= CONFIG.SafeHpPct then
+		local best, bk = pickGate(r.Position, function(g) return flat(g.pos, dp) <= 400 and g.pos.X <= dp.X + 150 end)
+		if best then farmGate(best, bk, r); return true end
+	end
+	local node = nearest(oreNodes(), CONFIG.WorkRadius)
+	if not (node and flat(node.Position, dp) <= CONFIG.WorkRadius) then return false end
+	Phase = "Без вождения: копаю руду"
+	local names, radius = CONFIG.OreNames, CONFIG.OreSearchRadius
+	CONFIG.OreNames, CONFIG.OreSearchRadius, Mining = {}, CONFIG.WorkRadius, true
+	pcall(farmStep)
+	CONFIG.OreNames, CONFIG.OreSearchRadius, Mining = names, radius, false
+	return true
+end
+
+local function dungeonFarmStep()
+	if State.Auto then State.DungeonFarm = false; return end
+	if not alive() then Phase = "Ждём возрождения"; return end
+	if workspace:GetAttribute("InCutScene") == true then Phase = "Катсцена"; return end
+	if heal(60) then return end
+	if hpPct() < CONFIG.GuardHpPct then
+		if inDungeon() then exitDungeon("мало HP") end
+		Phase = "Укрытие (мало HP)"; hide("мало HP"); return
+	end
+	if inDungeon() then return trackedDungeonRun() end
+	if deathChestStep() then return end
+	driveStop()
+	if armorStep() then Phase = "Надеваю броню"; return end
+	local r = hrp()
+	if not r then return end
+	-- сумка почти полна — продать на ближайшем столе
+	local n, cap = bagUsage()
+	if n and cap and cap > 0 and n / cap * 100 >= CONFIG.SellAtPct and sellStep(r.Position, true) then return end
+	if not swept then sweepPath(); return end
+
+	local d = getDrill()
+	local maxX = (d and pos(d) or r.Position).X + 150 -- только открытая территория (до бура)
+	local best, bk = pickGate(r.Position, function(g) return g.pos.X <= maxX end)
+	if not best then
+		local left = 0
+		for k, g in pairs(knownGates) do
+			if g.pos.X <= maxX and farmedAt[k] ~= math.huge and (farmFails[k] or 0) < 3 then left += 1 end
+		end
+		if left == 0 then
+			status("[Данжи] все данжи в открытой территории пройдены — фарм данжей выключен")
+			State.DungeonFarm = false
+		end
+		Phase = "Данжи: жду"
+		task.wait(1)
+		return
+	end
+	farmGate(best, bk, r)
 end
 
 ----------------------------------------------------------------- LOOPS
