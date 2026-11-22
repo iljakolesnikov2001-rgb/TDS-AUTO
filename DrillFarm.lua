@@ -2043,13 +2043,15 @@ local function enterGate(g, key)
 	end
 end
 
+local curPit -- текущая паучья яма (SpiderPit), если мы в ней
 local function exitDungeon(why)
 	status("[Dungeon] выход: " .. why)
 	local r = hrp()
 	local best, bd
 	for _, d in ipairs(workspace:GetDescendants()) do
 		-- только выход из данжа (у SpiderPit тоже есть Exit)
-		if d:IsA("ProximityPrompt") and d.ActionText == "Exit" and d:GetFullName():find(".Dungeon_", 1, true) then
+		if d:IsA("ProximityPrompt") and d.ActionText == "Exit" and (d:GetFullName():find(".Dungeon_", 1, true)
+			or (curPit and d:IsDescendantOf(curPit))) then
 			local p = promptPos(d)
 			local dd = p and r and (p - r.Position).Magnitude
 			if dd and (not bd or dd < bd) then best, bd = d, dd end
@@ -2067,7 +2069,7 @@ local function exitDungeon(why)
 		if inter then pcall(function() inter:InvokeServer(best.Parent.Parent) end) end
 		task.wait(1.5)
 	end
-	if out() then dungeonActive = false; table.clear(killSkip) end
+	if out() then dungeonActive = false; curPit = nil; table.clear(killSkip) end
 	return not dungeonActive
 end
 
@@ -2111,7 +2113,103 @@ local function idleChests(g)
 	end
 	return out
 end
+-- Паучья яма (SpiderPit): вход — встать на место очереди (тег DungeonQueueSpot у ворот), идёт отсчёт
+-- (QueueState=Countdown, CountdownEndsAt) и телепорт внутрь. Внутри волны (CurrentWave/MaxWave, Enemy),
+-- после последней — SpiderPitCompleted=true и сундуки (промпты Interact). Яма активна, только когда до неё
+-- доехал бур (открытая территория).
+local pitStep, pitRun
+do
+local pitTried = {}
+local function pitGatePos(m)
+	local g = m:FindFirstChild("SpiderGate")
+	return g and pos(g)
+end
+local function pitsNear(dp, radius)
+	local out = {}
+	for _, m in ipairs(workspace:GetChildren()) do
+		local id = m:GetAttribute("SpiderPitId")
+		local gp = id and m:GetAttribute("SpiderPitCompleted") ~= true and pitGatePos(m)
+		if gp and flat(gp, dp) <= radius and (pitTried[id] or 0) < os.clock() then table.insert(out, m) end
+	end
+	return out
+end
+pitStep = function(dp, radius)
+	if hpPct() < CONFIG.SafeHpPct then return false end
+	local pit = pitsNear(dp, radius or 400)[1]
+	if not pit then return false end
+	local id, gp = pit:GetAttribute("SpiderPitId"), pitGatePos(pit)
+	pitTried[id] = os.clock() + 60 -- не пустили — повторим через минуту
+	driveStop()
+	Phase = "Паучья яма: встаю в очередь"
+	local r = hrp()
+	if not r then return true end
+	r.AssemblyLinearVelocity = Vector3.zero
+	r.CFrame = CFrame.new(gp.X, gp.Y + 10, gp.Z)
+	pcall(function() player:RequestStreamAroundAsync(gp, 5) end)
+	local spot
+	for _ = 1, 12 do
+		for _, q in ipairs(CS:GetTagged("DungeonQueueSpot")) do
+			if q:IsA("BasePart") and q:IsDescendantOf(pit) then spot = q end
+		end
+		if spot then break end
+		task.wait(0.25)
+	end
+	if not spot then status("[Pit] место очереди не найдено"); return true end
+	-- встать ногами (сервер считает игроков на площадке) и ждать отсчёт → телепорт
+	r = hrp()
+	if r then r.AssemblyLinearVelocity = Vector3.zero; r.CFrame = spot.CFrame + Vector3.new(0, 4, 0) end
+	local from, t0 = r and r.Position, os.clock()
+	while Running and busy() and os.clock() - t0 < 30 do
+		local c = hrp()
+		if not c then break end
+		if player:GetAttribute("InDungeon") == true or (from and (c.Position - from).Magnitude > 150) then
+			dungeonActive, curPit, curGate = true, pit, nil
+			dungeonStart, dungeonIdle = os.clock(), os.clock()
+			table.clear(killSkip)
+			Stats.dungeons += 1
+			status("[Pit] вошёл в паучью яму (сложность " .. tostring(pit:GetAttribute("Difficulty")) .. ")")
+			return true
+		end
+		local st = spot:GetAttribute("QueueState")
+		Phase = st == "Countdown" and ("Паучья яма: отсчёт %d с"):format(math.max(0, math.ceil((spot:GetAttribute("CountdownEndsAt") or 0) - workspace:GetServerTimeNow())))
+			or "Паучья яма: жду очередь"
+		-- 8 с без отсчёта — яма ещё закрыта (бур не доехал / кто-то внутри)
+		if os.clock() - t0 > 8 and st ~= "Countdown" then break end
+		if (c.Position - spot.Position).Magnitude > 25 then c.CFrame = spot.CFrame + Vector3.new(0, 4, 0) end
+		task.wait(0.25)
+	end
+	status(("[Pit] не пустили (очередь: %s, игроков %s)"):format(tostring(spot:GetAttribute("QueueState")), tostring(spot:GetAttribute("PlayerCount"))))
+	return true
+end
+pitRun = function()
+	local pit = curPit
+	Phase = ("Паучья яма: волна %s/%s"):format(tostring(pit:GetAttribute("CurrentWave")), tostring(pit:GetAttribute("MaxWave")))
+	if hpPct() < 60 and #enemies(60) > 0 then exitDungeon("мало HP"); return end
+	local list = enemies(400)
+	if #list > 0 then
+		killOne(list[1])
+		dungeonIdle = os.clock()
+		return
+	end
+	local r = hrp()
+	if not r then return end
+	-- сундуки и лут (после последней волны)
+	if chestStep(r.Position, 600) then Phase = "Паучья яма: сундуки"; dungeonIdle = os.clock(); return end
+	if lootStep(r.Position, 400) then dungeonIdle = os.clock(); return end
+	if pit:GetAttribute("SpiderPitCompleted") == true then
+		if os.clock() - dungeonIdle > 6 then
+			pitTried[pit:GetAttribute("SpiderPitId") or ""] = math.huge
+			exitDungeon("паучья яма пройдена")
+		end
+		return
+	end
+	-- волны идут по таймеру: ждём; совсем долго ничего не происходит — выходим
+	if os.clock() - dungeonIdle > 60 or os.clock() - dungeonStart > 900 then exitDungeon("в яме ничего не происходит") end
+end
+end -- do (паучьи ямы)
+
 local function dungeonRun()
+	if curPit then return pitRun() end
 	Phase = "Подземелье"
 	-- в данже мобы преследуют и в укрытии: при опасности сразу выходим
 	if hpPct() < 60 and #enemies(60) > 0 then exitDungeon("мало HP"); return end
@@ -2372,6 +2470,7 @@ local function autoStep()
 	if armorStep() then Phase = "Надеваю броню"; return end
 	if upgradeStep() then Phase = "Прокачка бура"; return end
 
+	if not State.NoDrive and pitStep(dp, 200) then return end
 	local g, key = gateNear(dp)
 	if g then
 		if hpPct() < CONFIG.SafeHpPct then driveStop(); Phase = "Жду HP перед подземельем"; return end
@@ -2492,6 +2591,8 @@ end
 -- Фарм данжей в открытой территории: бур стоит, персонаж по кругу проходит данжи от старта до бура.
 -- Ворота грузятся только рядом с игроком (streaming), поэтому позиции запоминаем: при проходе бура и разовым
 -- облётом пути (путь — прямая вдоль X на z ≈ -772). Данж одноразовый: пройден, когда волна завершена и сундуки открыты.
+local dungeonFarmStep
+do
 local knownGates = getgenv and (getgenv().DF_KnownGates or {}) or {}
 if getgenv then getgenv().DF_KnownGates = knownGates end
 local farmedAt, farmFails = {}, {}
@@ -2595,6 +2696,7 @@ end
 noDriveIdle = function(dp)
 	local r = hrp()
 	if not r then return false end
+	if pitStep(dp, 400) then return true end
 	if hpPct() >= CONFIG.SafeHpPct then
 		local best, bk = pickGate(r.Position, function(g) return flat(g.pos, dp) <= 400 and g.pos.X <= dp.X + 150 end)
 		if best then farmGate(best, bk, r); return true end
@@ -2609,7 +2711,7 @@ noDriveIdle = function(dp)
 	return true
 end
 
-local function dungeonFarmStep()
+dungeonFarmStep = function()
 	if State.Auto then State.DungeonFarm = false; return end
 	if not alive() then Phase = "Ждём возрождения"; return end
 	if workspace:GetAttribute("InCutScene") == true then Phase = "Катсцена"; return end
@@ -2630,6 +2732,7 @@ local function dungeonFarmStep()
 	if not swept then sweepPath(); return end
 
 	local d = getDrill()
+	if d and pos(d) and pitStep(pos(d), 600) then return end -- паучьи ямы рядом с буром
 	local maxX = (d and pos(d) or r.Position).X + 150 -- только открытая территория (до бура)
 	local best, bk = pickGate(r.Position, function(g) return g.pos.X <= maxX end)
 	if not best then
@@ -2647,6 +2750,7 @@ local function dungeonFarmStep()
 	end
 	farmGate(best, bk, r)
 end
+end -- do (фарм данжей)
 
 ----------------------------------------------------------------- LOOPS
 local loops = {
