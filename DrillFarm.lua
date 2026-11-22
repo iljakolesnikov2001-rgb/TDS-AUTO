@@ -865,12 +865,22 @@ local function plainArmor(t)
 end
 local function oldGear()
 	local melee, out = {}, {}
+	-- броня не лучше надетой в своём слоте (ботинки — и не быстрее надетых) — лишняя, даже с особыми свойствами
+	local function worse(t)
+		local c = player.Character
+		local slot = t:GetAttribute("ArmorType")
+		slot = slot == "Head" and "Helmet" or slot
+		local have, a = c and slot and c:GetAttribute(slot), t:GetAttribute("Armor") or 0
+		if type(have) ~= "number" or a > have then return false end
+		local h = c:FindFirstChildOfClass("Humanoid")
+		return a < have or (t:GetAttribute("SpeedBoost") or 0) <= (h and h:GetAttribute("SpeedBoost") or 0)
+	end
 	for _, src in ipairs({ player:FindFirstChild("Backpack"), player.Character }) do
 		for _, t in ipairs(src and src:GetChildren() or {}) do
 			if t:IsA("Tool") then
 				local cat = t:GetAttribute("Category") or ""
 				if cat == "Melee" then table.insert(melee, t)
-				elseif cat == "Armor" and plainArmor(t) or cat:find("Gun") or cat == "Tool" and t:GetAttribute("Class") ~= "Pickaxe" and t:GetAttribute("ActionType") ~= "Use" then
+				elseif cat == "Armor" and (plainArmor(t) or worse(t)) or cat:find("Gun") or cat == "Tool" and t:GetAttribute("Class") ~= "Pickaxe" and t:GetAttribute("ActionType") ~= "Use" then
 					table.insert(out, t)
 				end
 			end
@@ -1310,6 +1320,16 @@ enemies = function(radius, center)
 	table.sort(out, function(a, b) return dist(a) < dist(b) end)
 	return out
 end
+-- Fuel Leech, присосавшийся к буру (Humanoid нет — в enemies не попадает). Глобал: лимит локалов.
+function leechOnDrill()
+	local d, folder = getDrill(), workspace:FindFirstChild("Npc")
+	local dp = d and pos(d)
+	for _, m in ipairs(dp and folder and folder:GetChildren() or {}) do
+		local p = pos(m)
+		if m:GetAttribute("FuelLeechState") == "Attached" and m:GetAttribute("FuelLeechVulnerable") ~= false
+			and (m:GetAttribute("FuelLeechHealth") or 0) > 0 and p and (p - dp).Magnitude < 80 then return m end
+	end
+end
 
 -- Позиция для удара (смещение от центра монстра). Опытным путём: над монстром не выше макушки+2 и
 -- сбоку в пределах ~6 st работает; точное зависит от монстра и стен — поэтому перебираем по кругу,
@@ -1591,7 +1611,8 @@ local function hide(why, keep)
 	pcall(function()
 		if not spot then return end
 		local t0, lastHp, lastCheck = os.clock(), hpPct(), os.clock()
-		while Running and (busy() or State.KillAura) and alive() and ((hpPct() < CONFIG.SafeHpPct and dangerNear()) or (keep and keep())) and os.clock() - t0 < 240 do
+		while Running and (busy() or State.KillAura) and alive() and ((hpPct() < CONFIG.SafeHpPct and dangerNear()) or (keep and keep())) and os.clock() - t0 < 240
+			and not (hpPct() >= 35 and leechOnDrill()) do -- пиявка сосёт топливо — выходим её бить
 			r = hrp()
 			if not r then break end
 			r.Anchored = false -- Anchored не реплицируется: для сервера мы оставались там, где нас били
@@ -2429,6 +2450,14 @@ local function autoStep()
 	if workspace:GetAttribute("InCutScene") == true then Phase = "Катсцена"; return end
 	if heal(60) then Phase = "Лечусь"; return end
 	if not inDungeon() and deathChestStep() then return end
+	-- Fuel Leech присосался к буру и сосёт топливо — убиваем сразу (киркой), даже при невысоком HP
+	local leech = not inDungeon() and hpPct() >= 35 and leechOnDrill()
+	if leech then
+		Phase = "Бью Fuel Leech (сосёт топливо)"
+		driveStop()
+		killOne(leech)
+		return
+	end
 	if hpPct() < CONFIG.GuardHpPct then
 		if inDungeon() then exitDungeon("мало HP") end
 		-- аптечек нет, а монеты есть — в ближайший магазин за бинтами (быстрее, чем ждать регенерацию)
@@ -2466,19 +2495,6 @@ local function autoStep()
 	local dp = drill and pos(drill)
 	if not dp then Phase = "Бур не найден"; return end
 	local fp, fuel = fuelPct()
-
-	-- Fuel Leech присосался к буру и сосёт топливо — убиваем первым делом (киркой)
-	local npc = workspace:FindFirstChild("Npc")
-	for _, m in ipairs(npc and npc:GetChildren() or {}) do
-		local p = pos(m)
-		if m:GetAttribute("FuelLeechState") == "Attached" and m:GetAttribute("FuelLeechVulnerable") ~= false
-			and (m:GetAttribute("FuelLeechHealth") or 0) > 0 and p and (p - dp).Magnitude < 80 then
-			Phase = "Бью Fuel Leech (сосёт топливо)"
-			driveStop()
-			killOne(m)
-			return
-		end
-	end
 
 	-- Финальная стена (босс-бар): волна не кончится, пока стена цела. Бур, упёршийся в стену, ломает её сам,
 	-- пока есть топливо, — водитель не нужен. Поэтому: доезжаем до стены, а пока её HP падает — сидим в укрытии
@@ -3498,6 +3514,6 @@ getgenv().DF = { State = State, CONFIG = CONFIG, Stats = Stats, status = status,
 	drive = drive, driveStop = driveStop, refuel = refuel, fuelPct = fuelPct, fuelTools = fuelTools,
 	upgradeStep = upgradeStep, skipCutscene = skipCutscene, autoStep = autoStep, lootStep = lootStep,
 	gateNear = gateNear, enterGate = enterGate, exitDungeon = exitDungeon, dungeonRun = dungeonRun,
-	finalWallAhead = finalWallAhead, shopStep = shopStep, armorStep = armorStep, smeltStep = smeltStep, phase = function() return Phase end }
+	finalWallAhead = finalWallAhead, oldGear = oldGear, shopStep = shopStep, armorStep = armorStep, smeltStep = smeltStep, phase = function() return Phase end }
 status("[DrillFarm] Загружен")
 end)()
