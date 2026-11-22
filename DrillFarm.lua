@@ -48,7 +48,7 @@ local CONFIG = {
 	SellKeepRarity   = { "Legendary", "Mythic", "Exotic", "Secret", "Divine" }, -- не продавать
 	SellKeepCategory = { "Fuel", "Consumable" },  -- топливо не продаём
 	MoveSpeed        = 540,  -- студов/сек при перелёте
-	PickupDelay      = 0.6,
+	PickupDelay      = 0.05,
 	Tick             = 0.25,
 }
 
@@ -394,6 +394,15 @@ end
 -- Подбор предмета: перебираем варианты аргументов Pickup, запоминаем рабочий
 local pickupWay
 local function pickupItem(it)
+	-- 0) быстро: встать вплотную и Pickup(предмет) — сервер берёт с ~10 st и сразу отвечает true/false
+	local fast = knit("CarryInventoryService", "Pickup")
+	local ip = fast and pos(it)
+	local hr = hrp()
+	if ip and hr then
+		if (hr.Position - ip).Magnitude > 6 then hr.AssemblyLinearVelocity = Vector3.zero; hr.CFrame = CFrame.new(ip + Vector3.new(0, 3, 0)) end
+		local ok, res = pcall(function() return fast:InvokeServer(it) end)
+		if ok and res == true then return true end
+	end
 	-- 1) как это делает сама игра (выучено), 2) промпт/клик на предмете, 3) перебор Pickup
 	if replay("item", it) then return true end
 	local function gone() return changed("item", it) end
@@ -941,6 +950,33 @@ sellAll = function(sellPart)
 	tp(spot, Vector3.new(0, 4, 0))
 	task.wait(0.3)
 	local mine, failed = {}, {}
+	-- быстрый проход: всё продаваемое подряд через DropGroup(id) (~0.1 с на предмет), без опроса инвентаря
+	local dropRf = knit("CarryInventoryService", "DropGroup")
+	if dropRf then
+		local before = {}
+		for _, it in ipairs(folder:GetChildren()) do before[it] = true end
+		local list = {}
+		for _, e in ipairs(invEntries()) do if sellable(e) then table.insert(list, e) end end
+		for i, e in ipairs(list) do
+			local r = hrp()
+			if r and (r.Position - pos(spot)).Magnitude > 8 then tp(spot, Vector3.new(0, 4, 0)) end
+			pcall(function() dropRf:InvokeServer(e.Id) end)
+			if i % 5 == 0 then task.wait(0.05) end
+		end
+		task.wait(0.4)
+		for _, it in ipairs(folder:GetChildren()) do
+			if not before[it] then
+				local rar, cat = it:GetAttribute("Rarity") or "", it:GetAttribute("Category") or ""
+				if hasKey(rar, CONFIG.SellKeepRarity) or hasKey(cat, CONFIG.SellKeepCategory) then
+					pickupItem(it); status("[Sell] выпало не то, вернул: " .. it.Name)
+				else
+					mine[it] = true
+				end
+			end
+		end
+		if #list > 0 then status(("[Sell] выкинул на стол: %d предметов"):format(#list)) end
+	end
+	-- что не ушло быстрым способом — по одному старым перебором
 	for _ = 1, 60 do
 		local target
 		for _, e in ipairs(invEntries()) do
@@ -1175,12 +1211,15 @@ local function refuel()
 		local r = hrp()
 		if r then r.AssemblyLinearVelocity = Vector3.zero; r.CFrame = d:GetPivot() * CFrame.new(0, -1, 21) end
 	end
+	-- трупы подряд (по 0.15 с), потом один раз ждём, пока они упадут в печь
+	for _ = 1, 3 do front(); task.wait(0.1) end
 	for _, e in ipairs(drop and corpses() or {}) do
 		if fuelPct() >= 95 or not hrp() or hpPct() < CONFIG.GuardHpPct + 10 or #enemies(20) >= 2 then break end
-		for _ = 1, 5 do front(); task.wait(0.1) end
+		front()
 		if pcall(function() drop:InvokeServer(e.Id) end) then burned += 1 end
-		for _ = 1, 15 do front(); task.wait(0.1) end -- ждём, пока труп упадёт в печь
+		task.wait(0.15)
 	end
+	if burned > 0 then for _ = 1, 12 do front(); task.wait(0.1) end end
 	if burned > 0 then
 		inventory(true)
 		status("[Fuel] сжёг трупов: " .. burned)
@@ -1645,7 +1684,7 @@ end
 ----------------------------------------------------------------- AUTO FARM
 -- Лут: по одному предмету за шаг (между шагами заново проверяем HP/топливо/монстров)
 local gearGain, wearItem -- ниже (магазин)
-local function lootStep(center, radius, fuelOnly)
+local function lootOne(center, radius, fuelOnly)
 	local full = bagFull()
 	local best, bd
 	for _, it in ipairs(groundItems()) do
@@ -1684,12 +1723,12 @@ local function lootStep(center, radius, fuelOnly)
 		wearItem(best)
 		return true
 	end
-	if moveTo(best, collecting) then
-		task.wait(0.15)
+	if (pos(best) - (hrp() and hrp().Position or pos(best))).Magnitude < 600 or moveTo(best, collecting) then
 		if pickupItem(best) then
 			Stats.items += 1
 			status("[Loot] подобрал: " .. name)
 			task.wait(CONFIG.PickupDelay)
+			return "picked"
 		else
 			skipUntil[best] = os.clock() + 60
 			local sid = best:GetAttribute("SessionSnapshotItemId")
@@ -1698,6 +1737,16 @@ local function lootStep(center, radius, fuelOnly)
 		end
 	else
 		skipUntil[best] = os.clock() + 10
+	end
+	return true
+end
+-- подбор пачкой: после удачного подбора сразу берём следующий, пока рядом нет врагов (до 15 за шаг)
+local function lootStep(center, radius, fuelOnly)
+	local res = lootOne(center, radius, fuelOnly)
+	if res ~= "picked" then return res end
+	for _ = 1, 14 do
+		if #enemies(30) > 0 or hpPct() < CONFIG.GuardHpPct then break end
+		if lootOne(center, radius, fuelOnly) ~= "picked" then break end
 	end
 	return true
 end
@@ -2120,7 +2169,7 @@ end
 -- после последней — SpiderPitCompleted=true и сундуки (промпты Interact). Яма активна, только когда до неё
 -- доехал бур (открытая территория).
 local pitStep, pitRun
-do
+;(function() -- своя функция: у Luau лимит 200 локальных на функцию
 local pitTried = {}
 local function pitGatePos(m)
 	local g = m:FindFirstChild("SpiderGate")
@@ -2208,7 +2257,7 @@ pitRun = function()
 	-- волны идут по таймеру: ждём; совсем долго ничего не происходит — выходим
 	if os.clock() - dungeonIdle > 60 or os.clock() - dungeonStart > 900 then exitDungeon("в яме ничего не происходит") end
 end
-end -- do (паучьи ямы)
+end)() -- (паучьи ямы)
 
 local function dungeonRun()
 	if curPit then return pitRun() end
@@ -2594,7 +2643,7 @@ end
 -- Ворота грузятся только рядом с игроком (streaming), поэтому позиции запоминаем: при проходе бура и разовым
 -- облётом пути (путь — прямая вдоль X на z ≈ -772). Данж одноразовый: пройден, когда волна завершена и сундуки открыты.
 local dungeonFarmStep
-do
+;(function() -- своя функция: у Luau лимит 200 локальных на функцию
 local knownGates = getgenv and (getgenv().DF_KnownGates or {}) or {}
 if getgenv then getgenv().DF_KnownGates = knownGates end
 local farmedAt, farmFails, farmTries = {}, {}, {}
@@ -2759,7 +2808,7 @@ dungeonFarmStep = function()
 	end
 	farmGate(best, bk, r)
 end
-end -- do (фарм данжей)
+end)() -- (фарм данжей)
 
 ----------------------------------------------------------------- LOOPS
 local loops = {
