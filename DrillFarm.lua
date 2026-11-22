@@ -2519,9 +2519,14 @@ AS.wallSeen = setmetatable({}, { __mode = "k" })
 		AS.saveNext = os.clock() + 120
 		Phase = "Бур не продвигается — сохраняю вещи на алтаре"
 		status(("[Save] бур стоит %d мин — ищу алтарь Save Gear"):format(CONFIG.SaveGearStallMin))
+		AS.saveNow(dp)
+		return true
+	end
+	-- лететь к ближайшему алтарю, сохранить лучшие вещи (сервер завершает заход и кидает в лобби); true = SaveGear вызван
+	AS.saveNow = function(dp)
 		driveStop()
 		local r = hrp()
-		if not r then return true end
+		if not r then return false end
 		local function hold(p, secs)
 			local t0 = os.clock()
 			while os.clock() - t0 < secs do
@@ -2534,8 +2539,9 @@ AS.wallSeen = setmetatable({}, { __mode = "k" })
 		-- ближайший известный алтарь; нет — облетаем путь назад от бура
 		local best
 		for _, at in pairs(AS.altars) do if not best or (at - dp).Magnitude < (best - dp).Magnitude then best = at end end
-		if not best then
-			for x = dp.X - 300, dp.X - 30000, -800 do
+		-- первый алтарь ~50 000 м (X≈19 500): мельче лететь назад незачем
+		if not best and dp.X > 19000 then
+			for x = dp.X - 300, math.max(dp.X - 30000, 18000), -800 do
 				local p = Vector3.new(x, 150, -772)
 				pcall(function() player:RequestStreamAroundAsync(p, 3) end)
 				hold(p, 1)
@@ -2543,21 +2549,24 @@ AS.wallSeen = setmetatable({}, { __mode = "k" })
 				if at then best = at; break end
 			end
 		end
-		if not best then status("[Save] алтарь не найден"); return true end
-		pcall(function() player:RequestStreamAroundAsync(best, 5) end)
-		hold(best + Vector3.new(0, 3, 0), 1.5)
-		local prompt = findPrompt(best)
-		if prompt and fireproximityprompt then pcall(fireproximityprompt, prompt) end
-		task.wait(0.5)
+		if best then
+			pcall(function() player:RequestStreamAroundAsync(best, 5) end)
+			hold(best + Vector3.new(0, 3, 0), 1.5)
+			local prompt = findPrompt(best)
+			if prompt and fireproximityprompt then pcall(fireproximityprompt, prompt) end
+			task.wait(0.5)
+		else
+			status("[Save] алтарь не найден (первый на ~50 000 м) — пробую сохранить без него")
+		end
 		local ok, ch = pcall(function() return knit("PlayerService", "GetSaveGearChoices"):InvokeServer() end)
-		if not (ok and type(ch) == "table") then status("[Save] список вещей не получен: " .. tostring(ch)); return true end
+		if not (ok and type(ch) == "table") then status("[Save] список вещей не получен: " .. tostring(ch)); return false end
 		local sel, n = selection(ch)
 		local names = {}
 		for _, it in ipairs(ch.Items or {}) do if sel[it.Id] then table.insert(names, it.Name .. "×" .. sel[it.Id]) end end
 		status(("[Save] сохраняю %d/%d: %s"):format(n, ch.Limit or 0, table.concat(names, ", ")))
 		local ok2, res = pcall(function() return knit("PlayerService", "SaveGear"):InvokeServer(sel) end)
 		status("[Save] результат: " .. tostring(ok2) .. " " .. tostring(res))
-		return true
+		return ok2 and res ~= false
 	end
 end)()
 local function autoStep()
@@ -3140,25 +3149,38 @@ if old then old:Destroy() end
 local gui = new("ScreenGui", { Name = "DrillFarm", ResetOnSpawn = false,
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, pg)
 
+-- справа по центру: слева у игры свои панели (монеты, HP, голод), меню их перекрывало
 local main = new("Frame", {
-	Size = UDim2.new(0, 270, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-	Position = UDim2.new(0, 24, 0.12, 0), BackgroundColor3 = T.Bg, BorderSizePixel = 0,
+	Size = UDim2.new(0, 290, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -16, 0, 48), BackgroundColor3 = T.Bg, BorderSizePixel = 0,
 }, gui)
 corner(main, 12); stroke(main)
 new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder }, main)
+-- на телефоне/эмуляторе экран в логических пикселях маленький (~360 по высоте) — ужимаем меню
+local uiScale = new("UIScale", {}, main)
+local function rescale() uiScale.Scale = math.clamp(workspace.CurrentCamera.ViewportSize.Y / 560, 0.62, 1) end
+rescale()
+local function sc() return uiScale.Scale end
 
 -- Шапка
-local header = new("Frame", { Size = UDim2.new(1, 0, 0, 44), BackgroundTransparency = 1, LayoutOrder = 0 }, main)
+local header = new("Frame", { Size = UDim2.new(1, 0, 0, 46), BackgroundTransparency = 1, LayoutOrder = 0 }, main)
+local dot = new("Frame", { Size = UDim2.new(0, 8, 0, 8), Position = UDim2.new(0, 14, 0, 13),
+	BackgroundColor3 = T.Off, BorderSizePixel = 0 }, header)
+corner(dot, 4)
 new("TextLabel", {
 	Text = "DrillFarm", Font = FONT_B, TextSize = 16, TextColor3 = T.Text,
 	BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left,
-	Position = UDim2.new(0, 16, 0, 6), Size = UDim2.new(1, -90, 0, 18),
+	Position = UDim2.new(0, 28, 0, 7), Size = UDim2.new(1, -100, 0, 18),
 }, header)
 local subLabel = new("TextLabel", {
 	Text = "Drill to Earth's Core", Font = FONT, TextSize = 11, TextColor3 = T.Sub,
-	BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left,
-	Position = UDim2.new(0, 16, 0, 24), Size = UDim2.new(1, -90, 0, 14),
+	BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+	Position = UDim2.new(0, 14, 0, 26), Size = UDim2.new(1, -90, 0, 14),
 }, header)
+local accent = new("Frame", { Size = UDim2.new(1, -24, 0, 2), Position = UDim2.new(0, 12, 1, -2),
+	BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, header)
+new("UIGradient", { Color = ColorSequence.new(T.Accent, Color3.fromRGB(170, 110, 255)),
+	Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 0.7) }) }, accent)
 local minBtn = new("TextButton", {
 	Text = "–", Font = FONT_B, TextSize = 18, TextColor3 = T.Sub, AutoButtonColor = false,
 	BackgroundColor3 = T.Card, Size = UDim2.new(0, 28, 0, 28), Position = UDim2.new(1, -72, 0, 8),
@@ -3171,8 +3193,8 @@ local closeBtn = new("TextButton", {
 corner(closeBtn, 8)
 
 -- Вкладки
-local tabHolder = new("Frame", { Size = UDim2.new(1, 0, 0, 38), BackgroundTransparency = 1, LayoutOrder = 1 }, main)
-local tabBar = new("Frame", { Size = UDim2.new(1, -24, 0, 30), Position = UDim2.new(0, 12, 0, 0),
+local tabHolder = new("Frame", { Size = UDim2.new(1, 0, 0, 44), BackgroundTransparency = 1, LayoutOrder = 1 }, main)
+local tabBar = new("Frame", { Size = UDim2.new(1, -24, 0, 30), Position = UDim2.new(0, 12, 0, 8),
 	BackgroundColor3 = T.Card, BorderSizePixel = 0 }, tabHolder)
 corner(tabBar, 8)
 new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder }, tabBar)
@@ -3194,18 +3216,20 @@ local function setScroll(y)
 	local viewH = view.AbsoluteSize.Y
 	local maxY = math.max(0, contentH() - viewH)
 	scrollY = math.clamp(y, 0, maxY)
-	cur.frame.Position = UDim2.new(0, 0, 0, -scrollY)
+	-- scrollY и Absolute* — в экранных пикселях, а смещения UDim2 — до UIScale: делим на масштаб
+	cur.frame.Position = UDim2.new(0, 0, 0, -scrollY / sc())
 	thumb.Visible = maxY > 0
 	if maxY > 0 then
 		local th = math.max(24, viewH * viewH / contentH())
-		thumb.Size = UDim2.new(0, 3, 0, th)
-		thumb.Position = UDim2.new(1, -5, 0, (viewH - th) * scrollY / maxY)
+		thumb.Size = UDim2.new(0, 3, 0, th / sc())
+		thumb.Position = UDim2.new(1, -5, 0, (viewH - th) * scrollY / maxY / sc())
 	end
 end
--- Высота = контент, но не больше 70% экрана
+-- Высота = контент, но низ меню выше хотбара
 local function fitHeight()
-	local vp = workspace.CurrentCamera.ViewportSize.Y
-	view.Size = UDim2.new(1, 0, 0, math.min(contentH(), math.floor(vp * 0.7) - 82))
+	-- от верха меню до хотбара (~60 px снизу), минус шапка и вкладки
+	local room = gui.AbsoluteSize.Y - (main.AbsolutePosition.Y - gui.AbsolutePosition.Y) - 60 - 90 * sc()
+	view.Size = UDim2.new(1, 0, 0, math.max(60 * sc(), math.min(contentH(), room)) / sc())
 	setScroll(scrollY)
 end
 local function over(p)
@@ -3247,7 +3271,7 @@ do
 		return Enum.ContextActionResult.Pass
 	end, false, 3000, Enum.UserInputType.MouseWheel)
 end
-bind(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), fitHeight)
+bind(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), function() rescale(); fitHeight() end)
 
 local function showPage(name)
 	for n, p in pairs(pages) do p.frame.Visible = n == name end
@@ -3424,6 +3448,37 @@ local function tile(parent, title, x, y, w)
 		Position = UDim2.new(0, 8, 0, 16), Size = UDim2.new(1, -16, 0, 18) }, f)
 end
 
+-- окно подтверждения поверх страниц (перезагрузка через DrillFarmClose закрывает без вопросов)
+local confirm = new("TextButton", { Text = "", AutoButtonColor = false, Visible = false, ZIndex = 20,
+	Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = T.Bg, BackgroundTransparency = 0.08, BorderSizePixel = 0 }, view)
+local askTitle, askText, askOk, askFn
+do
+	local box = new("Frame", { Size = UDim2.new(1, -24, 0, 146), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0.5, 0), BackgroundColor3 = T.Card, BorderSizePixel = 0 }, confirm)
+	corner(box, 10); stroke(box)
+	askTitle = new("TextLabel", { Text = "", Font = FONT_B, TextSize = 15, TextColor3 = T.Text,
+		BackgroundTransparency = 1, Position = UDim2.new(0, 14, 0, 12), Size = UDim2.new(1, -28, 0, 20),
+		TextXAlignment = Enum.TextXAlignment.Left }, box)
+	askText = new("TextLabel", { Text = "", Font = FONT, TextSize = 11, TextColor3 = T.Sub, BackgroundTransparency = 1,
+		TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+		Position = UDim2.new(0, 14, 0, 36), Size = UDim2.new(1, -28, 0, 48) }, box)
+	local function btn(text, color, x)
+		local b = new("TextButton", { Text = text, Font = FONT_B, TextSize = 13, TextColor3 = T.Text, AutoButtonColor = false,
+			BackgroundColor3 = color, Size = UDim2.new(0.5, -18, 0, 32), Position = UDim2.new(x, x > 0 and 4 or 14, 1, -44) }, box)
+		corner(b, 8)
+		return b
+	end
+	btn("Отмена", T.Off, 0).MouseButton1Click:Connect(function() confirm.Visible = false end)
+	askOk = btn("", T.Bad, 0.5)
+	askOk.MouseButton1Click:Connect(function() confirm.Visible = false; task.spawn(askFn) end)
+end
+local function ask(title, text, okText, fn)
+	main.Visible, view.Visible, tabHolder.Visible = true, true, true -- в свёрнутом меню окну негде показаться
+	askTitle.Text, askText.Text, askOk.Text, askFn = title, text, okText, fn
+	confirm.Visible = true
+	if view.AbsoluteSize.Y < 160 * sc() then view.Size = UDim2.new(1, 0, 0, 160) end
+end
+
 ----------------------------------------------------------------- Вкладка «Главная»
 addPage("main", "Главная")
 local autoBtn = new("TextButton", {
@@ -3446,15 +3501,57 @@ autoBtn.MouseButton1Click:Connect(function()
 end)
 renderAuto()
 
-local card = row(186)
+local saveBtn = new("TextButton", {
+	Text = "БЫСТРЫЙ СЕЙВ И ВЫХОД В ЛОББИ", Font = FONT_B, TextSize = 12, TextColor3 = T.Warn, AutoButtonColor = false,
+	BackgroundColor3 = T.Card, Size = UDim2.new(1, 0, 0, 34), LayoutOrder = nextOrder(),
+}, page)
+corner(saveBtn, 8)
+new("UIStroke", { Color = T.Warn, Thickness = 1, Transparency = 0.5 }, saveBtn)
+saveBtn.MouseButton1Click:Connect(function()
+	if scrollMoved then return end
+	ask("Быстрый сейв?", "Всё остановится, бот долетит до алтаря Save Gear, сохранит лучшие вещи, и заход закончится.",
+		"Сохранить", function()
+			local prev = table.clone(State)
+			for k in pairs(State) do if k ~= "SkipCutscenes" then State[k] = false end end
+			saveBtn.Text = "Лечу к алтарю…"
+			local d = getDrill()
+			local p = (d and pos(d)) or (hrp() and hrp().Position)
+			local ok = p and AS.saveNow(p)
+			saveBtn.Text = ok and "Сохранено — выход в лобби" or "Не вышло — см. лог"
+			if not ok then for k, v in pairs(prev) do State[k] = v end end -- не сохранилось — фарм продолжается
+			task.delay(4, function() if saveBtn.Parent then saveBtn.Text = "БЫСТРЫЙ СЕЙВ И ВЫХОД В ЛОББИ" end end)
+		end)
+end)
+
+-- полоска: подпись слева, значение справа, заполнение снизу
+local function meter(parent, title, y)
+	local f = new("Frame", { Size = UDim2.new(1, 0, 0, 32), Position = UDim2.new(0, 0, 0, y),
+		BackgroundColor3 = T.Bg, BorderSizePixel = 0 }, parent)
+	corner(f, 6)
+	new("TextLabel", { Text = title, Font = FONT, TextSize = 11, TextColor3 = T.Sub, BackgroundTransparency = 1,
+		TextXAlignment = Enum.TextXAlignment.Left, Position = UDim2.new(0, 8, 0, 3), Size = UDim2.new(0.5, -8, 0, 16) }, f)
+	local v = new("TextLabel", { Text = "—", Font = FONT_B, TextSize = 12, TextColor3 = T.Text, BackgroundTransparency = 1,
+		TextXAlignment = Enum.TextXAlignment.Right, Position = UDim2.new(0.4, 0, 0, 3), Size = UDim2.new(0.6, -8, 0, 16) }, f)
+	local bar = new("Frame", { Size = UDim2.new(1, -16, 0, 5), Position = UDim2.new(0, 8, 0, 22),
+		BackgroundColor3 = T.Off, BorderSizePixel = 0 }, f)
+	corner(bar, 3)
+	local fill = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = T.Good, BorderSizePixel = 0 }, bar)
+	corner(fill, 3)
+	return function(text, frac, color)
+		v.Text = text
+		tween(fill, { Size = UDim2.new(math.clamp(frac or 0, 0, 1), 0, 1, 0), BackgroundColor3 = color or T.Good })
+	end
+end
+
+local card = row(212)
 new("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8), PaddingTop = UDim.new(0, 8) }, card)
 local vPhase = tile(card, "Сейчас", 0, 0, 1)
-local vHp    = tile(card, "Здоровье", 0, 44)
-local vFuel  = tile(card, "Топливо бура", 0.5, 44)
-local vBag   = tile(card, "Сумка", 0, 88)
-local vCoins = tile(card, "Монеты", 0.5, 88)
-local vDmg   = tile(card, "Урон бура", 0, 132)
-local vTime  = tile(card, "Время фарма", 0.5, 132)
+local mHp    = meter(card, "Здоровье", 44)
+local mFuel  = meter(card, "Топливо бура", 82)
+local mBag   = meter(card, "Сумка", 120)
+local vCoins = tile(card, "Монеты", 0, 158, 1 / 3)
+local vDmg   = tile(card, "Урон бура", 1 / 3, 158, 1 / 3)
+local vTime  = tile(card, "Время", 2 / 3, 158, 1 / 3)
 
 local counters = new("TextLabel", {
 	Text = "", Font = FONT, TextSize = 11, TextColor3 = T.Sub, BackgroundTransparency = 1, TextWrapped = true,
@@ -3464,13 +3561,6 @@ StatusLabel = new("TextLabel", {
 	Text = "Лог: —", Font = FONT, TextSize = 11, TextColor3 = T.Accent, TextWrapped = true,
 	BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
 	Size = UDim2.new(1, 0, 0, 30), LayoutOrder = nextOrder(),
-}, page)
-section("Что делает авто-фарм")
-new("TextLabel", {
-	Text = "Едет на буре и ломает стены · по дороге открывает сундуки, собирает лут и канистры · "
-		.. "заходит в подземелья · продаёт у стола · качает урон бура · заправляет · при низком HP прячется под землю.",
-	Font = FONT, TextSize = 11, TextColor3 = T.Sub, BackgroundTransparency = 1, TextWrapped = true,
-	TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, 0, 0, 58), LayoutOrder = nextOrder(),
 }, page)
 
 ----------------------------------------------------------------- Вкладка «Настройки»
@@ -3486,6 +3576,7 @@ slider("Радиус в подземелье", "DungeonRadius", 100, 800, 50)
 section("Дополнительно")
 slider("Радиус Kill Aura", "KillRadius", 10, 300, 10)
 slider("Радиус поиска руды", "OreSearchRadius", 0, 500, 10)
+slider("Копать руду у бура (0 = нет)", "AutoOreRadius", 0, 200, 10)
 
 ----------------------------------------------------------------- Вкладка «Ещё»
 addPage("extra", "Ещё")
@@ -3541,7 +3632,7 @@ action("Копировать скан", function()
 	return copyText(lastScan) and "Скопировано ✓" or "Нет буфера · F9"
 end)
 new("TextLabel", {
-	Text = "RightShift — скрыть  ·  × — закрыть", Font = FONT, TextSize = 11, TextColor3 = T.Sub,
+	Text = "RightShift — скрыть  ·  × — закрыть скрипт", Font = FONT, TextSize = 11, TextColor3 = T.Sub,
 	BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 14), LayoutOrder = nextOrder(),
 }, page)
 
@@ -3560,14 +3651,16 @@ task.spawn(function()
 			vPhase.TextColor3 = busy() and T.Text or T.Sub
 			local h = hum()
 			local hp = hpPct()
-			vHp.Text = h and ("%d / %d"):format(math.floor(h.Health), math.floor(h.MaxHealth)) or "—"
-			vHp.TextColor3 = hp < CONFIG.GuardHpPct and T.Bad or hp < CONFIG.SafeHpPct and T.Warn or T.Text
-			local fp, f = fuelPct()
+			mHp(h and ("%d / %d"):format(math.floor(h.Health), math.floor(h.MaxHealth)) or "—", hp / 100,
+				hp < CONFIG.GuardHpPct and T.Bad or hp < CONFIG.SafeHpPct and T.Warn or T.Good)
+			local fp = fuelPct()
 			local nCans = #fuelTools()
-			vFuel.Text = ("%d%%%s"):format(math.floor(fp), nCans > 0 and ("  +" .. nCans .. " кан.") or "")
-			vFuel.TextColor3 = fp < 20 and T.Bad or fp < CONFIG.FuelTargetPct and T.Warn or T.Text
+			mFuel(("%d%%%s"):format(math.floor(fp), nCans > 0 and ("  +" .. nCans .. " кан.") or ""), fp / 100,
+				fp < 20 and T.Bad or fp < CONFIG.FuelTargetPct and T.Warn or T.Accent)
 			local n, cap = bagUsage()
-			vBag.Text = (n and cap) and (n .. " / " .. cap) or "—"
+			local bf = (n and cap and cap > 0) and n / cap or 0
+			mBag((n and cap) and (n .. " / " .. cap) or "—", bf, bf * 100 >= CONFIG.SellAtPct and T.Warn or T.Accent)
+			dot.BackgroundColor3 = State.Auto and T.Good or busy() and T.Warn or T.Off
 			vCoins.Text = coinsCache and tostring(coinsCache) or "—"
 			local d = getDrill()
 			vDmg.Text = d and tostring(1 + (d:GetAttribute("DrillPower") or 0) + (d:GetAttribute("BonusDamage") or 0)) or "—"
@@ -3576,7 +3669,7 @@ task.spawn(function()
 			counters.Text = ("Сундуки %d · Лут %d · Данжи %d · Убито %d · Укрытия %d\nАпгрейды %d · Покупки %d · Аптечки %d (есть %d) · Заправки %d · Продажи %d")
 				:format(Stats.chests, Stats.items, Stats.dungeons, Stats.kills, Stats.hides,
 					Stats.upgrades, Stats.bought or 0, Stats.heals or 0, #medkits(), Stats.refuels, Stats.sells)
-			subLabel.Text = busy() and ("● " .. Phase) or "Drill to Earth's Core"
+			subLabel.Text = busy() and Phase or "Drill to Earth's Core"
 			if (autoBtn.Text:find("ОСТАНОВИТЬ", 1, true) ~= nil) ~= State.Auto then renderAuto() end
 		end)
 		task.wait(0.5)
@@ -3604,7 +3697,9 @@ local function shutdown()
 end
 closeBtn.MouseEnter:Connect(function() tween(closeBtn, { TextColor3 = Color3.fromRGB(255, 90, 90) }) end)
 closeBtn.MouseLeave:Connect(function() tween(closeBtn, { TextColor3 = T.Sub }) end)
-closeBtn.MouseButton1Click:Connect(shutdown)
+closeBtn.MouseButton1Click:Connect(function()
+	ask("Закрыть DrillFarm?", "Авто-фарм и все функции остановятся, меню исчезнет до перезапуска скрипта.", "Закрыть", shutdown)
+end)
 getgenv = getgenv or function() return _G end
 getgenv().DrillFarmClose = shutdown
 
@@ -3636,7 +3731,7 @@ do
 	end)
 	bind(UIS.InputEnded, function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-			dragging = false
+			if dragging then dragging = false; fitHeight() end
 		end
 	end)
 end
