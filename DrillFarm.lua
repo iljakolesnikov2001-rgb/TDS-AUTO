@@ -2523,7 +2523,8 @@ AS.wallSeen = setmetatable({}, { __mode = "k" })
 		return true
 	end
 	-- лететь к ближайшему алтарю, сохранить лучшие вещи (сервер завершает заход и кидает в лобби); true = SaveGear вызван
-	AS.saveNow = function(dp)
+	-- direct = сразу SaveGear без полёта к алтарю (проверено: сервер принимает и на ~6 000 м, вдали от алтаря)
+	AS.saveNow = function(dp, direct)
 		driveStop()
 		local r = hrp()
 		if not r then return false end
@@ -2538,9 +2539,11 @@ AS.wallSeen = setmetatable({}, { __mode = "k" })
 		end
 		-- ближайший известный алтарь; нет — облетаем путь назад от бура
 		local best
-		for _, at in pairs(AS.altars) do if not best or (at - dp).Magnitude < (best - dp).Magnitude then best = at end end
+		if not direct then
+			for _, at in pairs(AS.altars) do if not best or (at - dp).Magnitude < (best - dp).Magnitude then best = at end end
+		end
 		-- первый алтарь ~50 000 м (X≈19 500): мельче лететь назад незачем
-		if not best and dp.X > 19000 then
+		if not direct and not best and dp.X > 19000 then
 			for x = dp.X - 300, math.max(dp.X - 30000, 18000), -800 do
 				local p = Vector3.new(x, 150, -772)
 				pcall(function() player:RequestStreamAroundAsync(p, 3) end)
@@ -2555,7 +2558,7 @@ AS.wallSeen = setmetatable({}, { __mode = "k" })
 			local prompt = findPrompt(best)
 			if prompt and fireproximityprompt then pcall(fireproximityprompt, prompt) end
 			task.wait(0.5)
-		else
+		elseif not direct then
 			status("[Save] алтарь не найден (первый на ~50 000 м) — пробую сохранить без него")
 		end
 		local ok, ch = pcall(function() return knit("PlayerService", "GetSaveGearChoices"):InvokeServer() end)
@@ -3509,14 +3512,14 @@ corner(saveBtn, 8)
 new("UIStroke", { Color = T.Warn, Thickness = 1, Transparency = 0.5 }, saveBtn)
 saveBtn.MouseButton1Click:Connect(function()
 	if scrollMoved then return end
-	ask("Быстрый сейв?", "Всё остановится, бот долетит до алтаря Save Gear, сохранит лучшие вещи, и заход закончится.",
+	ask("Быстрый сейв?", "Всё остановится, лучшие вещи (до 9) сохранятся, заход закончится — выход в лобби.",
 		"Сохранить", function()
 			local prev = table.clone(State)
 			for k in pairs(State) do if k ~= "SkipCutscenes" then State[k] = false end end
-			saveBtn.Text = "Лечу к алтарю…"
+			saveBtn.Text = "Сохраняю…"
 			local d = getDrill()
 			local p = (d and pos(d)) or (hrp() and hrp().Position)
-			local ok = p and AS.saveNow(p)
+			local ok = p and AS.saveNow(p, true)
 			saveBtn.Text = ok and "Сохранено — выход в лобби" or "Не вышло — см. лог"
 			if not ok then for k, v in pairs(prev) do State[k] = v end end -- не сохранилось — фарм продолжается
 			task.delay(4, function() if saveBtn.Parent then saveBtn.Text = "БЫСТРЫЙ СЕЙВ И ВЫХОД В ЛОББИ" end end)
