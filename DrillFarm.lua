@@ -36,6 +36,7 @@ local CONFIG = {
 	OreNames         = {},   -- типы руды (SessionOreType: "Coal", "Iron"...); пусто = любая
 	MaxTimePerOre    = 8,
 	OreSearchRadius  = 150,
+	AutoOreRadius    = 80,   -- авто-фарм: копать руду не дальше этого от бура (0 = не копать)
 	PickaxeName      = "Pickaxe",
 
 	BagCountAttr     = "CarryUsage",
@@ -665,7 +666,7 @@ local function farmStep()
 	local start, oreCheck = os.clock(), os.clock()
 	while farming() and oreAlive(node) do
 		-- выпавшую руду подбираем сразу, а не после того как жила кончится (иначе она пропадает/её уносит)
-		if os.clock() - oreCheck > 1 and pickupOresNear then oreCheck = os.clock(); pickupOresNear(p, 25, true) end
+		if os.clock() - oreCheck > 0.5 and pickupOresNear then oreCheck = os.clock(); pickupOresNear(p, 25, true) end
 		if CONFIG.MaxTimePerOre > 0 and os.clock() - start > CONFIG.MaxTimePerOre then break end
 		if Selling then task.wait(0.3) continue end -- убийство монстров / продажа заняли персонажа
 		r = hrp()
@@ -684,7 +685,6 @@ local function farmStep()
 		node:SetAttribute("_DF_Skip", true)
 		task.delay(30, function() if node.Parent then node:SetAttribute("_DF_Skip", nil) end end)
 	end
-	task.wait(0.4)
 	if farming() and not oreAlive(node) and pickupOresNear then pickupOresNear(p, 25) end
 end
 
@@ -722,24 +722,22 @@ local grabSack -- ниже
 pickupOresNear = function(center, radius, quick)
 	local folder = workspace:FindFirstChild("Items")
 	if not folder then return end
-	local t0 = os.clock()
-	repeat -- руда может появиться не сразу
-		local found = false
+	-- pickupItem сам встаёт вплотную (сервер отдаёт с ~10 st) — отдельный подлёт и паузы не нужны.
+	-- Ждём появления руды до 1.5 с; после последней подобранной — ещё 0.4 с на догоняющие куски.
+	local t0, lastFound = os.clock(), nil
+	repeat
 		for _, it in ipairs(folder:GetChildren()) do
 			if not farming() or bagFull() then return end
 			local p = pos(it)
 			if it:GetAttribute("DisplayCategory") == "Ore" and it:GetAttribute("SessionSnapshotItemId") and p and (p - center).Magnitude <= radius
 				and (skipUntil[it] or 0) < os.clock() then
-				found = true
-				if moveTo(it, function() return farming() end) then
-					task.wait(0.15)
-					if pickupItem(it) then task.wait(CONFIG.PickupDelay) else skipUntil[it] = os.clock() + 60 end
-				end
+				lastFound = os.clock()
+				if pickupItem(it) then task.wait(CONFIG.PickupDelay) else skipUntil[it] = os.clock() + 60 end
 			end
 		end
-		if found or quick then return end
-		task.wait(0.3)
-	until os.clock() - t0 > 2
+		if quick then return end
+		task.wait(0.1)
+	until (lastFound and os.clock() - lastFound > 0.4) or os.clock() - t0 > 1.5
 end
 
 -- Автопродажа: выкидываем предметы на стол продажи по одному.
@@ -2109,7 +2107,7 @@ local function gateKey(g)
 end
 local function gateNear(center)
 	for _, g in ipairs(workspace:GetChildren()) do
-		if g:IsA("Model") and g.Name:sub(1, #CONFIG.GateName) == CONFIG.GateName and not g.Name:find("Tutorial") then
+		if g:IsA("Model") and g.Name:sub(1, #CONFIG.GateName) == CONFIG.GateName then
 			local p, k = pos(g), gateKey(g)
 			if p and k and not gateDone[k] and flat(p, center) <= CONFIG.GateStopDist then return g, k end
 		end
@@ -2778,6 +2776,22 @@ local function autoStep()
 		wallReady[w] = true
 		status("[Auto] финальная стена — ломаем (будет волна врагов)")
 	end
+	-- руда у бура: остановиться и выкопать, а не проезжать мимо
+	if not State.NoDrive and CONFIG.AutoOreRadius > 0 and hpPct() >= CONFIG.SafeHpPct and not bagFull() then
+		local node
+		for _, n in ipairs(oreNodes()) do
+			if flat(n.Position, dp) <= CONFIG.AutoOreRadius then node = n; break end
+		end
+		if node then
+			Phase = "Копаю руду у бура"
+			driveStop()
+			local names, radius = CONFIG.OreNames, CONFIG.OreSearchRadius
+			CONFIG.OreNames, CONFIG.OreSearchRadius, Mining = {}, CONFIG.AutoOreRadius + 40, true
+			pcall(farmStep)
+			CONFIG.OreNames, CONFIG.OreSearchRadius, Mining = names, radius, false
+			return
+		end
+	end
 	if State.NoDrive then
 		-- без вождения: бур ведёт кто-то другой — держимся на буре, чтобы не отстать
 		if noDriveIdle(dp) then return end
@@ -2871,7 +2885,7 @@ if getgenv then getgenv().DF_KnownGates = knownGates end
 local farmedAt, farmFails, farmTries = {}, {}, {}
 local function registerGates()
 	for _, g in ipairs(workspace:GetChildren()) do
-		if g:IsA("Model") and g.Name:sub(1, #CONFIG.GateName) == CONFIG.GateName and not g.Name:find("Tutorial") then
+		if g:IsA("Model") and g.Name:sub(1, #CONFIG.GateName) == CONFIG.GateName then
 			local k, p = gateKey(g), pos(g)
 			if k and p and not knownGates[k] then knownGates[k] = { pos = p, name = g.Name } end
 		end
