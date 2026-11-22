@@ -1330,8 +1330,10 @@ function leechOnDrill()
 	local dp = d and pos(d)
 	for _, m in ipairs(dp and folder and folder:GetChildren() or {}) do
 		local p = pos(m)
-		if m:GetAttribute("FuelLeechState") == "Attached" and m:GetAttribute("FuelLeechVulnerable") ~= false
-			and (m:GetAttribute("FuelLeechHealth") or 0) > 0 and p and (p - dp).Magnitude < 80 then return m end
+		-- присосалась — в 80 st; в любом другом уязвимом состоянии (вылезла из камня, ползёт к буру) — в 150 st
+		local st = m:GetAttribute("FuelLeechState")
+		if st and m:GetAttribute("FuelLeechVulnerable") ~= false and (m:GetAttribute("FuelLeechHealth") or 0) > 0
+			and p and (p - dp).Magnitude < (st == "Attached" and 80 or 150) and (killSkip[m] or 0) < os.clock() then return m end
 	end
 end
 
