@@ -22,8 +22,11 @@ local CONFIG = {
 	ItemsMinValue    = 0,
 	IgnoredItems     = { "Rock", "DeathChest" },
 	-- порядок покупки апгрейдов бура (сначала урон по стенам). Карточки за Robux не покупаются никогда.
-	UpgradePriority  = { "DrillPower", "MegaDrill", "UltraDrill", "PowerSlam", "RPMOverclock", "EngineOverdrive",
-		"PowerDrive", "DrillDefense", "HealthRegen", "TeamHealth", "FuelStorage", "SackStorage", "DriveSpeed" },
+	-- порядок покупки апгрейдов бура (тир-лист): сначала строго по списку,
+	UpgradePriority  = { "RPMOverclock", "PowerBurst", "UltraDrill", "MoneyDrill", "MegaDrill", "DrillPower", "PowerSlam" },
+	-- затем из этой группы — тот, у которого уровень на буре сейчас меньше всех; остальные — в последнюю очередь
+	UpgradeBalanced  = { "TeamHealth", "DrillDefense", "EngineOverdrive", "HealthRegen", "SackStorage",
+		"TeamPickaxeDamage", "TeamMeleeDamage", "PowerDrive", "DriveSpeed" },
 
 	-- Фарм руды (отдельный тумблер)
 	OreNames         = {},   -- типы руды (SessionOreType: "Coal", "Iron"...); пусто = любая
@@ -1191,7 +1194,12 @@ local function upgradeStep(force)
 	local best, bestRank
 	for _, o in ipairs(opts) do
 		if type(o) == "table" and o.Type == "Coins" and type(o.Cost) == "number" and o.Cost > 0 and o.Cost <= coins then
-			local rank = table.find(CONFIG.UpgradePriority, o.UpgradeName) or (#CONFIG.UpgradePriority + 1)
+			local rank = table.find(CONFIG.UpgradePriority, o.UpgradeName)
+			if not rank and table.find(CONFIG.UpgradeBalanced, o.UpgradeName) then
+				local d = getDrill()
+				rank = #CONFIG.UpgradePriority + 1 + (d and tonumber(d:GetAttribute(o.UpgradeName)) or 0) / 1000
+			end
+			rank = rank or 100
 			if not bestRank or rank < bestRank then best, bestRank = o, rank end
 		end
 	end
