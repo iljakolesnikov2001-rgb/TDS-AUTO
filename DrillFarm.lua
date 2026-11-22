@@ -60,7 +60,7 @@ local player   = Players.LocalPlayer
 local Running = true
 local Selling = false -- пока идёт продажа, остальные функции ждут
 local Connections = {}
-local State = { Auto=false, DungeonFarm=false, Farm=false, KillAura=false, Noclip=false, Highlight=false, SkipCutscenes=true }
+local State = { Auto=false, NoDrive=false, DungeonFarm=false, Farm=false, KillAura=false, Noclip=false, Highlight=false, SkipCutscenes=true }
 -- работает ли «мозг» (авто-фарм или фарм данжей) — по этому флагу продолжаются бой, укрытие, сбор
 local function busy() return State.Auto or State.DungeonFarm end
 local Stats = { chests=0, items=0, kills=0, dungeons=0, upgrades=0, hides=0, refuels=0, sells=0, start=nil }
@@ -1108,6 +1108,13 @@ end
 local function drive()
 	local drill = getDrill()
 	if not drill then return end
+	-- бур общий: если за рулём другой игрок — управление не отбираем
+	local who = drill:GetAttribute("DriverUserId")
+	if type(who) == "number" and who ~= 0 and who ~= player.UserId then
+		driveStarted = false
+		Phase = "За рулём другой игрок — помогаю"
+		return
+	end
 	if not isDriver() then
 		local seat = drill:FindFirstChild("LocalDriverSeat", true)
 		local r = hrp()
@@ -2162,7 +2169,7 @@ local function autoStep()
 		if inDungeon() then exitDungeon("мало HP") end
 		local d0 = getDrill()
 		local f0 = d0 and d0:GetAttribute(CONFIG.FuelAttr) or 0
-		if hpPct() >= 35 and not poisoned() and d0 and f0 >= CONFIG.DriveMinFuel and not drillStuck(pos(d0))
+		if not State.NoDrive and hpPct() >= 35 and not poisoned() and d0 and f0 >= CONFIG.DriveMinFuel and not drillStuck(pos(d0))
 			and not finalWallAhead(pos(d0)) then
 			heal(CONFIG.GuardHpPct)
 			Phase = "Мало HP — уезжаю от мобов"
@@ -2206,7 +2213,9 @@ local function autoStep()
 	-- пока есть топливо, — водитель не нужен. Поэтому: доезжаем до стены, а пока её HP падает — сидим в укрытии
 	-- подальше от волны. Перестала падать (бур откатился) — подъезжаем снова.
 	local wall = finalWallAhead(dp)
-	if wall and fuel >= CONFIG.DriveMinFuel then
+	if wall and fuel >= CONFIG.DriveMinFuel and not State.NoDrive then
+		-- у стены бур жжёт ~1%/с: сначала заправиться всем, что есть (канистры, уголь, трупы)
+		if fp < 85 and os.clock() > refuelNext and (#fuelTools() > 0 or #corpses() > 0) then Phase = "Заправка перед стеной"; refuel(); return end
 		local function track()
 			local h = wall:GetAttribute("Health") or 0
 			if not wallSeen[wall] then wallSeen[wall] = h
@@ -2218,6 +2227,9 @@ local function autoStep()
 			Phase = ("Бур ломает стену сам (%s HP) — жду в укрытии"):format(tostring(wall:GetAttribute("Health")))
 			hide("бур ломает стену", function()
 				local h = track()
+				Phase = ("Бур ломает стену сам (%d HP, топливо %d%%) — жду в укрытии"):format(math.floor(h), math.floor(fuelPct()))
+				-- топливо кончается, а заправиться есть чем — выходим заправить
+				if fuelPct() < 25 and (#fuelTools() > 0 or #corpses() > 0) then return false end
 				return wall.Parent ~= nil and h > 0 and os.clock() - wallHitAt < 4 and fuelPct() > 3
 			end)
 			return
@@ -2231,7 +2243,7 @@ local function autoStep()
 	-- монстры у бура: пока они рядом, они бьют и водителя (и того, кто заправляет) — сначала разбираемся с ними
 	local near = enemies(45, dp)
 	-- уезжаем от толпы или когда HP мало; 1–3 моба при хорошем HP быстрее убить (они всё равно догоняют)
-	if #near > 0 and (#near >= 4 or hpPct() < 70) and fuel >= CONFIG.DriveMinFuel and not drillStuck(dp) and not gateNear(dp) then
+	if #near > 0 and not State.NoDrive and (#near >= 4 or hpPct() < 70) and fuel >= CONFIG.DriveMinFuel and not drillStuck(dp) and not gateNear(dp) then
 		heal(70)
 		Phase = ("Уезжаю от мобов (%d)"):format(#near)
 		drive()
@@ -2323,6 +2335,16 @@ local function autoStep()
 		if hpPct() < CONFIG.SafeHpPct then driveStop(); Phase = "Перед финальной стеной: жду HP"; return end
 		wallReady[w] = true
 		status("[Auto] финальная стена — ломаем (будет волна врагов)")
+	end
+	if State.NoDrive then
+		-- без вождения: бур ведёт кто-то другой — держимся на буре, чтобы не отстать
+		Phase = "Без вождения: жду дел у бура"
+		local r = hrp()
+		if r and (r.Position - dp).Magnitude > 40 then
+			r.AssemblyLinearVelocity = Vector3.zero
+			r.CFrame = CFrame.new(dp + Vector3.new(0, 10, 0))
+		end
+		return
 	end
 	Phase = w and "Ломаю финальную стену" or "Еду"
 	drive()
@@ -2968,6 +2990,7 @@ slider("Радиус поиска руды", "OreSearchRadius", 0, 500, 10)
 ----------------------------------------------------------------- Вкладка «Ещё»
 addPage("extra", "Ещё")
 section("Функции")
+toggle("NoDrive", "Авто-фарм без вождения", "делает всё (бой, лут, сундуки, данжи, заправка, продажа), но бур не водит")
 toggle("DungeonFarm", "Фарм данжей", "по кругу проходит данжи и сундуки в уже открытой территории (бур стоит)")
 toggle("SkipCutscenes", "Авто-скип катсцен", "работает всегда, даже без авто-фарма")
 toggle("KillAura", "Kill Aura", "бьёт монстров рядом, прячется при низком HP")
