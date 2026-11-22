@@ -56,10 +56,12 @@ local player   = Players.LocalPlayer
 local Running = true
 local Selling = false -- пока идёт продажа, остальные функции ждут
 local Connections = {}
-local State = { Auto=false, Farm=false, KillAura=false, Noclip=false, Highlight=false, SkipCutscenes=true }
+local State = { Auto=false, DungeonFarm=false, Farm=false, KillAura=false, Noclip=false, Highlight=false, SkipCutscenes=true }
+-- работает ли «мозг» (авто-фарм или фарм данжей) — по этому флагу продолжаются бой, укрытие, сбор
+local function busy() return State.Auto or State.DungeonFarm end
 local Stats = { chests=0, items=0, kills=0, dungeons=0, upgrades=0, hides=0, refuels=0, sells=0, start=nil }
 local Phase = "Выключено"
-local function collecting() return State.Auto end
+local function collecting() return busy() end
 
 
 -- Статус: печать в F9 + строка внизу меню (видно и без консоли)
@@ -1269,14 +1271,14 @@ local function killOne(m)
 	if not (h and tool) then killSkip[m] = os.clock() + 30; return end
 	local stand, base, mid = standUnder(m)
 	if not stand then return end
-	if not moveTo(m, function() return State.KillAura or State.Auto end, stand) then return end
+	if not moveTo(m, function() return State.KillAura or busy() end, stand) then return end
 	Moving = true -- ноклип на время удара
 	-- у Fuel Leech своё здоровье в атрибуте FuelLeechHealth
 	local function mhp() return m:GetAttribute("FuelLeechHealth") or h.Health end
 	local t0, lastHp, lastHit = os.clock(), mhp(), os.clock()
 	local misses, myHp0, nodmg = 0, hpPct(), false
 	local toolCheck = os.clock()
-	while Running and (State.KillAura or State.Auto) and m.Parent and h.Health > 0 and mhp() > 0 do
+	while Running and (State.KillAura or busy()) and m.Parent and h.Health > 0 and mhp() > 0 do
 		local r = hrp()
 		stand, base, mid = standUnder(m)
 		if not (r and stand) then break end
@@ -1321,7 +1323,7 @@ local function hordeKill(m, center)
 	local t0, hp, last = os.clock(), h.Health, os.clock()
 	local fallback = false
 	Moving = true
-	while Running and State.Auto and m.Parent and h.Health > 0 and os.clock() - t0 < 15 and hpPct() >= CONFIG.GuardHpPct do
+	while Running and busy() and m.Parent and h.Health > 0 and os.clock() - t0 < 15 and hpPct() >= CONFIG.GuardHpPct do
 		local r, p = hrp(), pos(m)
 		if not (r and p) then break end
 		local away = Vector3.new(p.X - center.X, 0, p.Z - center.Z)
@@ -1352,7 +1354,7 @@ local function killStep(radius, back)
 	local r = hrp()
 	local origin = r and r.CFrame
 	pcall(function()
-		while Running and (State.KillAura or State.Auto) do
+		while Running and (State.KillAura or busy()) do
 			local list = enemies(radius)
 			if #list == 0 or hpPct() < CONFIG.GuardHpPct then break end
 			killOne(list[1])
@@ -1386,6 +1388,14 @@ task.spawn(function()
 				if v < last - 1 then
 					local near = {}
 					for _, m in ipairs(enemies(40)) do table.insert(near, m.Name .. "@" .. math.floor(dist(m))) end
+					if #near == 0 then -- кто бьёт издалека: ближайший живой моб в 300 st (включая пропущенных)
+						local f, best, bd = workspace:FindFirstChild("Npc"), nil, nil
+						for _, m in ipairs(f and f:GetChildren() or {}) do
+							local d = pos(m) and dist(m)
+							if d and d < 300 and (not bd or d < bd) then best, bd = m, d end
+						end
+						if best then table.insert(near, "дальний: " .. best.Name .. "@" .. math.floor(bd)) end
+					end
 					local c = player.Character
 					status(("[DMG] -%.0f → %.0f%s%s %s"):format(last - v, v,
 						c and c:GetAttribute("IsPoisoned") and " ЯД" or "", c and c:GetAttribute("IsToxicFogPoisoned") and " ТУМАН" or "",
@@ -1415,13 +1425,15 @@ local function safeSpot(avoid)
 	local d = getDrill()
 	local center = d and pos(d) or (hrp() and hrp().Position)
 	if not center then return end
-	local danger = threats(center, 600)
+	local danger = threats(center, 1000)
 	local best, bestScore
 	for k = 0, 7 do
 		local a = k * math.pi / 4
-		local p = center + Vector3.new(math.cos(a), 0, math.sin(a)) * 250
-		local score = math.huge
+		-- 600 st: дальше дистанции преследования мобов (ChaseDistance до 400); не внутри данжей
+		local p = center + Vector3.new(math.cos(a), 0, math.sin(a)) * 600
+		local score = inZone(p) and -math.huge or math.huge
 		for _, e in ipairs(danger) do score = math.min(score, flat(e, p)) end
+		if score == math.huge then score = 1e6 end
 		if avoid and flat(avoid, p) < 100 then score = score - 1000 end -- только что били тут
 		if not bestScore or score > bestScore then best, bestScore = p, score end
 	end
@@ -1495,7 +1507,7 @@ local function hide(why, keep)
 	pcall(function()
 		if not spot then return end
 		local t0, lastHp, lastCheck = os.clock(), hpPct(), os.clock()
-		while Running and (State.Auto or State.KillAura) and alive() and ((hpPct() < CONFIG.SafeHpPct and dangerNear()) or (keep and keep())) and os.clock() - t0 < 240 do
+		while Running and (busy() or State.KillAura) and alive() and ((hpPct() < CONFIG.SafeHpPct and dangerNear()) or (keep and keep())) and os.clock() - t0 < 240 do
 			r = hrp()
 			if not r then break end
 			r.Anchored = false -- Anchored не реплицируется: для сервера мы оставались там, где нас били
@@ -1705,6 +1717,16 @@ local function bestOwned(pred)
 end
 -- насколько товар лучше того, что есть (nil — не нужен)
 local shopCoins = 0
+-- скорость надетых ботинок: на персонаже висит модель брони с атрибутом SpeedBoost (если нет — запомненное при надевании)
+local bootSpeed = 0
+local function wornBootSpeed()
+	local c, best = player.Character, nil
+	for _, d in ipairs(c and c:GetDescendants() or {}) do
+		local sp = d:GetAttribute("SpeedBoost")
+		if type(sp) == "number" and not d:IsA("Tool") and not d:FindFirstAncestorOfClass("Tool") then best = math.max(best or 0, sp) end
+	end
+	return best or bootSpeed
+end
 gearGain = function(it)
 	local cat, dmg = it:GetAttribute("Category"), it:GetAttribute("Damage") or 0
 	if cat == "Melee" and it:GetAttribute("ActionType") == "Swing" then
@@ -1724,7 +1746,11 @@ gearGain = function(it)
 		slot = slot == "Head" and "Helmet" or slot
 		local c, a = player.Character, it:GetAttribute("Armor") or 0
 		local have = c and slot and (c:GetAttribute(slot) or 0) or math.huge
-		return a > have and (a - have) / math.max(have, 5) or nil
+		if a > have then return (a - have) / math.max(have, 5) end
+		-- скоростные ботинки: брони 0, ценность — SpeedBoost (Diamond +4, Rusty +1)
+		local sp = it:GetAttribute("SpeedBoost") or 0
+		if slot == "Boots" and a == have and sp > wornBootSpeed() then return 0.2 + (sp - wornBootSpeed()) * 0.05 end
+		return nil
 	end
 end
 -- Броня надевается «другой кнопкой»: Interact (E) по модели брони в мире (Pickup лишь кладёт её в рюкзак).
@@ -1742,29 +1768,49 @@ wearItem = function(it)
 	task.wait(0.8)
 	local a1 = c:GetAttribute("Armor") or 0
 	status(("[Gear] надел %s: броня %s → %s"):format(it:GetAttribute("DisplayName") or it.Name, tostring(a0), tostring(a1)))
-	return a1 > a0
+	if it:GetAttribute("ArmorType") == "Boots" and not it.Parent then bootSpeed = it:GetAttribute("SpeedBoost") or bootSpeed end
+	return a1 > a0 or not it.Parent
 end
 -- Броня, уже лежащая в рюкзаке (подобрана раньше): выбросить и надеть через Interact
 local armorTried = {}
 local function armorStep()
+	-- самый выгодный кусок брони из рюкзака (а не первый попавшийся)
+	local best, bg
 	for _, src in ipairs({ player:FindFirstChild("Backpack"), player.Character }) do
 		for _, t in ipairs(src and src:GetChildren() or {}) do
 			local id = t:IsA("Tool") and t:GetAttribute("Category") == "Armor" and t:GetAttribute("CarryItemId")
-			if id and not armorTried[id] and gearGain(t) then
-				armorTried[id] = true
-				driveStop()
-				local eq, drop = knit("ToolService", "EquipTool"), knit("ToolService", "Drop")
-				if t.Parent ~= player.Character and eq then pcall(function() eq:InvokeServer(t) end); task.wait(0.4) end
-				if drop then pcall(function() drop:InvokeServer() end) end
-				task.wait(0.8)
-				for _, it in ipairs(workspace.Items:GetChildren()) do
-					if it:GetAttribute("SessionSnapshotItemId") == id then wearItem(it); break end
-				end
-				return true
+			if id and (armorTried[id] or 0) < os.clock() then
+				local g = gearGain(t)
+				if g and (not bg or g > bg) then best, bg = t, g end
 			end
 		end
 	end
-	return false
+	if not best then return false end
+	local id, name = best:GetAttribute("CarryItemId"), best:GetAttribute("DisplayName") or best.Name
+	armorTried[id] = os.clock() + 60 -- не вышло — повторим через минуту
+	driveStop()
+	local eq, drop = knit("ToolService", "EquipTool"), knit("ToolService", "Drop")
+	if not (eq and drop) then return false end
+	-- в руке должен оказаться именно этот предмет: иначе Drop выкинет другой
+	for _ = 1, 3 do
+		if holds(gameTool(), best) then break end
+		pcall(function() eq:InvokeServer(best) end)
+		task.wait(0.4)
+	end
+	if not holds(gameTool(), best) then status("[Gear] не взял в руки: " .. name); return true end
+	local before = {}
+	for _, it in ipairs(workspace.Items:GetChildren()) do before[it] = true end
+	pcall(function() drop:InvokeServer() end)
+	local w
+	for _ = 1, 10 do
+		task.wait(0.2)
+		for _, it in ipairs(workspace.Items:GetChildren()) do
+			if it:GetAttribute("SessionSnapshotItemId") == id or (not before[it] and it.Name == best.Name) then w = it end
+		end
+		if w then break end
+	end
+	if w then wearItem(w) else status("[Gear] выброшенная броня не найдена: " .. name) end
+	return true
 end
 local function shopStep(center)
 	if os.clock() < shopNext then return false end
@@ -1872,6 +1918,7 @@ local function promptPos(pr)
 	return pr.Parent:IsA("Attachment") and pr.Parent.WorldPosition or pos(pr.Parent)
 end
 local dungeonIdle, dungeonStart = 0, 0
+local curGate, waveWaitAt -- текущий данж (модель ворот: внутри Wave, Arena) и начало ожидания волны
 local function enterGate(g, key)
 	gateTries[key] = (gateTries[key] or 0) + 1
 	if gateTries[key] >= 3 then gateDone[key] = true end
@@ -1912,6 +1959,7 @@ local function enterGate(g, key)
 		gateDone[key] = true
 		Stats.dungeons += 1
 		dungeonStart, dungeonIdle = os.clock(), os.clock()
+		curGate, waveWaitAt = g, 0
 		status("[Dungeon] вошёл: " .. g.Name)
 	else
 		status("[Dungeon] вход не сработал: " .. g.Name)
@@ -1972,17 +2020,67 @@ local function arenaStep()
 	return false
 end
 
+-- Данж: мобы у входа → арена (там стартует волна с боссом, Wave.WaveActive) → сундуки волны (Wave.ChestNodes)
+-- за ареной → выход. Интерьер длиной ~700 st, поэтому ищем по всему данжу, а не в 250 st от игрока.
+local function dungeonCenter()
+	local arena = curGate and curGate.Parent and curGate:FindFirstChild("Arena", true)
+	return arena and pos(arena), arena
+end
+local function idleChests(g)
+	local out, wave = {}, g and g:FindFirstChild("Wave")
+	local cn = wave and wave:FindFirstChild("ChestNodes")
+	for _, n in ipairs(cn and cn:GetChildren() or {}) do
+		if n:IsA("BasePart") and (n:GetAttribute("ChestOpenState") or "Idle") == "Idle" then table.insert(out, n) end
+	end
+	return out
+end
 local function dungeonRun()
 	Phase = "Подземелье"
 	-- в данже мобы преследуют и в укрытии: при опасности сразу выходим
 	if hpPct() < 60 and #enemies(60) > 0 then exitDungeon("мало HP"); return end
-	if killStep(CONFIG.DungeonRadius, false) then dungeonIdle = os.clock(); return end
 	local r = hrp()
 	if not r then return end
+	local ac, arena = dungeonCenter()
+	-- мобы: по всему данжу (вокруг арены 450 st) и рядом с нами
+	local list = enemies(CONFIG.DungeonRadius)
+	if #list == 0 and ac then list = enemies(450, ac) end
+	if #list > 0 then
+		Phase = "Подземелье: бой"
+		killOne(list[1])
+		dungeonIdle = os.clock()
+		return
+	end
+	local wave = curGate and curGate:FindFirstChild("Wave")
+	if wave and wave:GetAttribute("WaveCompleted") ~= true then
+		if wave:GetAttribute("WaveActive") == true then
+			Phase = "Подземелье: волна (жду мобов)"
+			dungeonIdle = os.clock()
+			task.wait(0.5)
+			return
+		end
+		-- волна стартует касанием зоны Wave.WaveTrigger (проверено: WaveActive → true, идут мобы)
+		local trig = wave:FindFirstChild("WaveTrigger")
+		if waveWaitAt == 0 then waveWaitAt = os.clock() end
+		if trig and waveWaitAt ~= math.huge and os.clock() - waveWaitAt < 30 then
+			Phase = "Подземелье: запускаю волну (с боссом)"
+			r.AssemblyLinearVelocity = Vector3.zero
+			r.CFrame = trig.CFrame
+			touch(trig)
+			dungeonIdle = os.clock()
+			task.wait(0.5)
+			return
+		end
+		status("[Dungeon] волна не стартовала за 30 с — иду к сундукам")
+		waveWaitAt = math.huge
+	end
+	-- сундуки волны (за ареной)
+	for _, n in ipairs(idleChests(curGate)) do
+		if chestStep(n.Position, 40) then Phase = "Подземелье: сундуки"; dungeonIdle = os.clock(); return end
+	end
 	if chestStep(r.Position, CONFIG.DungeonRadius) then dungeonIdle = os.clock(); return end
 	if lootStep(r.Position, CONFIG.DungeonRadius) then dungeonIdle = os.clock(); return end
 	if arenaStep() then dungeonIdle = os.clock(); return end
-	if os.clock() - dungeonIdle > 10 or os.clock() - dungeonStart > 600 then exitDungeon("зачищено") end
+	if os.clock() - dungeonIdle > 6 or os.clock() - dungeonStart > 600 then exitDungeon("зачищено") end
 end
 
 -- Финальная стена слоя («босс»-стена): при ударе идёт волна врагов
@@ -2003,12 +2101,21 @@ end
 -- После смерти вещи лежат в сундуке смерти (модель с ItemDatabaseId/Name *DeathChest*): забираем первым делом
 -- через DeathChestService.TakeAllItems(сундук) — так это делает сама игра.
 local deathTried = setmetatable({}, { __mode = "k" })
+-- в сервере могут быть другие игроки: чужой сундук смерти не трогаем (владелец — в атрибутах *Owner*/*Player*/*User*)
+local function mineChest(it)
+	for k, v in pairs(it:GetAttributes()) do
+		if (k:find("Owner") or k:find("Player") or k:find("User")) and (type(v) == "number" or type(v) == "string") then
+			if v ~= player.UserId and v ~= player.Name and v ~= tostring(player.UserId) and v ~= player.DisplayName then return false end
+		end
+	end
+	return true
+end
 local function deathChestStep()
 	local take = knit("DeathChestService", "TakeAllItems")
 	if not take then return false end
 	for _, it in ipairs(groundItems()) do
 		local id = tostring(it:GetAttribute("ItemDatabaseId") or it.Name)
-		if id:find("DeathChest") and (deathTried[it] or 0) < 3 and pos(it) then
+		if id:find("DeathChest") and (deathTried[it] or 0) < 3 and pos(it) and mineChest(it) then
 			deathTried[it] = (deathTried[it] or 0) + 1
 			Phase = "Забираю вещи из сундука смерти"
 			driveStop()
@@ -2113,7 +2220,8 @@ local function autoStep()
 
 	-- монстры у бура: пока они рядом, они бьют и водителя (и того, кто заправляет) — сначала разбираемся с ними
 	local near = enemies(45, dp)
-	if #near > 0 and fuel >= CONFIG.DriveMinFuel and not drillStuck(dp) and not gateNear(dp) then
+	-- уезжаем от толпы или когда HP мало; 1–3 моба при хорошем HP быстрее убить (они всё равно догоняют)
+	if #near > 0 and (#near >= 4 or hpPct() < 70) and fuel >= CONFIG.DriveMinFuel and not drillStuck(dp) and not gateNear(dp) then
 		heal(70)
 		Phase = ("Уезжаю от мобов (%d)"):format(#near)
 		drive()
@@ -2277,9 +2385,139 @@ local function copyText(text)
 end
 
 
+----------------------------------------------------------------- DUNGEON FARM
+-- Фарм данжей в открытой территории: бур стоит, персонаж по кругу проходит данжи от старта до бура.
+-- Ворота грузятся только рядом с игроком (streaming), поэтому позиции запоминаем: при проходе бура и разовым
+-- облётом пути (путь — прямая вдоль X на z ≈ -772). Данж одноразовый: пройден, когда волна завершена и сундуки открыты.
+local knownGates = getgenv and (getgenv().DF_KnownGates or {}) or {}
+if getgenv then getgenv().DF_KnownGates = knownGates end
+local farmedAt, farmFails = {}, {}
+local function registerGates()
+	for _, g in ipairs(workspace:GetChildren()) do
+		if g:IsA("Model") and g.Name:sub(1, #CONFIG.GateName) == CONFIG.GateName and not g.Name:find("Tutorial") then
+			local k, p = gateKey(g), pos(g)
+			if k and p and not knownGates[k] then knownGates[k] = { pos = p, name = g.Name } end
+		end
+	end
+end
+task.spawn(function() while Running do pcall(registerGates); task.wait(3) end end)
+
+local swept = false
+local function sweepPath()
+	local d = getDrill()
+	local dp = d and pos(d)
+	if not dp then return end
+	status("[Данжи] облёт открытой территории: ищу ворота")
+	Moving = true
+	for x = 0, dp.X, 250 do
+		if not (Running and State.DungeonFarm) then break end
+		local p = Vector3.new(x, dp.Y, dp.Z)
+		local r = hrp()
+		if r then r.AssemblyLinearVelocity = Vector3.zero; r.CFrame = CFrame.new(p - Vector3.new(0, 30, 0)) end -- под полом
+		pcall(function() player:RequestStreamAroundAsync(p, 3) end)
+		task.wait(0.4)
+		pcall(registerGates)
+	end
+	Moving = false
+	local n = 0
+	for _ in pairs(knownGates) do n += 1 end
+	status(("[Данжи] известно ворот: %d"):format(n))
+	swept = true
+end
+
+local function dungeonFarmStep()
+	if State.Auto then State.DungeonFarm = false; return end
+	if not alive() then Phase = "Ждём возрождения"; return end
+	if workspace:GetAttribute("InCutScene") == true then Phase = "Катсцена"; return end
+	if heal(60) then return end
+	if hpPct() < CONFIG.GuardHpPct then
+		if inDungeon() then exitDungeon("мало HP") end
+		Phase = "Укрытие (мало HP)"; hide("мало HP"); return
+	end
+	if inDungeon() then
+		dungeonRun()
+		-- вышли: данж пройден, если волна завершена и сундуков не осталось (иначе — вернёмся, напр. после укрытия)
+		if not inDungeon() and curGate then
+			local k = gateKey(curGate)
+			local wave = curGate:FindFirstChild("Wave")
+			if k then
+				if (not wave or wave:GetAttribute("WaveCompleted") == true) and #idleChests(curGate) == 0 then
+					farmedAt[k] = math.huge
+					status("[Данжи] пройден: " .. curGate.Name)
+				else
+					farmedAt[k] = os.clock() + 15
+				end
+			end
+		end
+		return
+	end
+	if deathChestStep() then return end
+	driveStop()
+	if armorStep() then Phase = "Надеваю броню"; return end
+	local r = hrp()
+	if not r then return end
+	-- сумка почти полна — продать на ближайшем столе
+	local n, cap = bagUsage()
+	if n and cap and cap > 0 and n / cap * 100 >= CONFIG.SellAtPct and sellStep(r.Position, true) then return end
+	if not swept then sweepPath(); return end
+
+	local d = getDrill()
+	local maxX = (d and pos(d) or r.Position).X + 150 -- только открытая территория (до бура)
+	local best, bk, bd
+	for k, g in pairs(knownGates) do
+		if g.pos.X <= maxX and (farmedAt[k] or 0) ~= math.huge and os.clock() >= (farmedAt[k] or 0) and (farmFails[k] or 0) < 3 then
+			local dd = (g.pos - r.Position).Magnitude
+			if not bd or dd < bd then best, bk, bd = g, k, dd end
+		end
+	end
+	if not best then
+		local left = 0
+		for k, g in pairs(knownGates) do
+			if g.pos.X <= maxX and farmedAt[k] ~= math.huge and (farmFails[k] or 0) < 3 then left += 1 end
+		end
+		if left == 0 then
+			status("[Данжи] все данжи в открытой территории пройдены — фарм данжей выключен")
+			State.DungeonFarm = false
+		end
+		Phase = "Данжи: жду"
+		task.wait(1)
+		return
+	end
+	Phase = "Лечу к данжу: " .. best.name
+	-- к воротам: над ними, ждём прогрузки модели
+	r.AssemblyLinearVelocity = Vector3.zero
+	r.CFrame = CFrame.new(best.pos + Vector3.new(0, 6, 0))
+	pcall(function() player:RequestStreamAroundAsync(best.pos, 5) end)
+	local g
+	for _ = 1, 20 do
+		for _, m in ipairs(workspace:GetChildren()) do
+			if m:IsA("Model") and m.Name:sub(1, #CONFIG.GateName) == CONFIG.GateName and gateKey(m) == bk then g = m end
+		end
+		if g then break end
+		task.wait(0.25)
+	end
+	if not g then farmFails[bk] = (farmFails[bk] or 0) + 1; farmedAt[bk] = os.clock() + 30; return end
+	local wv = g:FindFirstChild("Wave")
+	if wv and wv:GetAttribute("WaveCompleted") == true and #idleChests(g) == 0 then
+		farmedAt[bk] = math.huge
+		status("[Данжи] уже пройден: " .. g.Name)
+		return
+	end
+	-- сундуки и мобы у входа
+	if chestStep(best.pos, 150) then return end
+	gateDone[bk], gateTries[bk] = nil, 0
+	enterGate(g, bk)
+	if not inDungeon() then
+		farmFails[bk] = (farmFails[bk] or 0) + 1
+		farmedAt[bk] = os.clock() + 20
+		status(("[Данжи] %s: вход не сработал (попытка %d)"):format(best.name, farmFails[bk]))
+	end
+end
+
 ----------------------------------------------------------------- LOOPS
 local loops = {
 	Auto = autoStep,
+	DungeonFarm = dungeonFarmStep,
 	Farm = farmStep,
 	KillAura = function()
 		if hpPct() < CONFIG.GuardHpPct then hide("Kill Aura") else killStep(CONFIG.KillRadius, true) end
@@ -2304,7 +2542,7 @@ end)
 task.spawn(function()
 	while Running do
 		if driveStarted and not State.Auto then pcall(driveStop, "выключено") end
-		if not State.Auto and Phase ~= "Выключено" then Phase = "Выключено" end
+		if not busy() and Phase ~= "Выключено" then Phase = "Выключено" end
 		task.wait(0.5)
 	end
 end)
@@ -2669,7 +2907,7 @@ autoBtn.MouseButton1Click:Connect(function()
 	if scrollMoved then return end
 	State.Auto = not State.Auto
 	if State.Auto then
-		State.Farm, State.KillAura = false, false -- они дерутся за персонажа с авто-фармом
+		State.Farm, State.KillAura, State.DungeonFarm = false, false, false -- они дерутся за персонажа с авто-фармом
 		Stats.start = Stats.start or os.clock()
 	end
 	renderAuto()
@@ -2720,6 +2958,7 @@ slider("Радиус поиска руды", "OreSearchRadius", 0, 500, 10)
 ----------------------------------------------------------------- Вкладка «Ещё»
 addPage("extra", "Ещё")
 section("Функции")
+toggle("DungeonFarm", "Фарм данжей", "по кругу проходит данжи и сундуки в уже открытой территории (бур стоит)")
 toggle("SkipCutscenes", "Авто-скип катсцен", "работает всегда, даже без авто-фарма")
 toggle("KillAura", "Kill Aura", "бьёт монстров рядом, прячется при низком HP")
 toggle("Farm", "Фарм руды", "отдельно от авто-фарма")
@@ -2785,7 +3024,7 @@ task.spawn(function()
 				task.spawn(function() local c = call("CurrencyService", "GetCurrency"); if type(c) == "number" then coinsCache = c end end)
 			end
 			vPhase.Text = Phase
-			vPhase.TextColor3 = State.Auto and T.Text or T.Sub
+			vPhase.TextColor3 = busy() and T.Text or T.Sub
 			local h = hum()
 			local hp = hpPct()
 			vHp.Text = h and ("%d / %d"):format(math.floor(h.Health), math.floor(h.MaxHealth)) or "—"
@@ -2804,7 +3043,7 @@ task.spawn(function()
 			counters.Text = ("Сундуки %d · Лут %d · Данжи %d · Убито %d · Укрытия %d\nАпгрейды %d · Покупки %d · Аптечки %d (есть %d) · Заправки %d · Продажи %d")
 				:format(Stats.chests, Stats.items, Stats.dungeons, Stats.kills, Stats.hides,
 					Stats.upgrades, Stats.bought or 0, Stats.heals or 0, #medkits(), Stats.refuels, Stats.sells)
-			subLabel.Text = State.Auto and ("● " .. Phase) or "Drill to Earth's Core"
+			subLabel.Text = busy() and ("● " .. Phase) or "Drill to Earth's Core"
 			if (autoBtn.Text:find("ОСТАНОВИТЬ", 1, true) ~= nil) ~= State.Auto then renderAuto() end
 		end)
 		task.wait(0.5)
@@ -2872,6 +3111,6 @@ getgenv().DF = { State = State, CONFIG = CONFIG, Stats = Stats, status = status,
 	drive = drive, driveStop = driveStop, refuel = refuel, fuelPct = fuelPct, fuelTools = fuelTools,
 	upgradeStep = upgradeStep, skipCutscene = skipCutscene, autoStep = autoStep, lootStep = lootStep,
 	gateNear = gateNear, enterGate = enterGate, exitDungeon = exitDungeon, dungeonRun = dungeonRun,
-	finalWallAhead = finalWallAhead, shopStep = shopStep, phase = function() return Phase end }
+	finalWallAhead = finalWallAhead, shopStep = shopStep, armorStep = armorStep, phase = function() return Phase end }
 status("[DrillFarm] Загружен")
 end)()
