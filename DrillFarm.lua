@@ -2632,6 +2632,9 @@ local function autoStep()
 	if lootStep(dp, CONFIG.WorkRadius) then Phase = "Сбор лута"; return end
 	if fp < 20 and #fuelTools() == 0 then
 		if lootStep(dp, CONFIG.FuelSearchRadius, true) then Phase = "Ищу топливо"; return end
+		-- уголь, только что выкопанный вдали от бура, лежит у нас под ногами
+		local me0 = hrp()
+		if me0 and lootStep(me0.Position, 80, true) then Phase = "Подбираю уголь"; return end
 		-- канистр нет — копаем уголь (Ore_Coal = топливо 25) киркой обычным фармом руды
 		local r = hrp()
 		local hasCoal = false
