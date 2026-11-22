@@ -27,6 +27,7 @@ local CONFIG = {
 	-- затем из этой группы — тот, у которого уровень на буре сейчас меньше всех; остальные — в последнюю очередь
 	UpgradeBalanced  = { "TeamHealth", "DrillDefense", "EngineOverdrive", "HealthRegen", "SackStorage",
 		"TeamPickaxeDamage", "TeamMeleeDamage", "PowerDrive", "DriveSpeed" },
+	UpgradeNever     = { "CartExtension" }, -- никогда не покупать (вагоны замедляют бур)
 
 	-- Фарм руды (отдельный тумблер)
 	OreNames         = {},   -- типы руды (SessionOreType: "Coal", "Iron"...); пусто = любая
@@ -1193,7 +1194,8 @@ local function upgradeStep(force)
 	if type(opts) ~= "table" or type(ver) ~= "number" then return false end
 	local best, bestRank
 	for _, o in ipairs(opts) do
-		if type(o) == "table" and o.Type == "Coins" and type(o.Cost) == "number" and o.Cost > 0 and o.Cost <= coins then
+		if type(o) == "table" and o.Type == "Coins" and type(o.Cost) == "number" and o.Cost > 0 and o.Cost <= coins
+			and not table.find(CONFIG.UpgradeNever, o.UpgradeName) then
 			local rank = table.find(CONFIG.UpgradePriority, o.UpgradeName)
 			if not rank and table.find(CONFIG.UpgradeBalanced, o.UpgradeName) then
 				local d = getDrill()
