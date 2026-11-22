@@ -149,9 +149,13 @@ local function moveTo(obj, stillOk, targetPos)
 	Moving = true
 	local okc, ok = pcall(function()
 	local target = targetPos or (p + Vector3.new(0, 3, 0))
+	-- сидя за рулём телепорт не сдвигает персонажа: встаём, иначе цикл крутится вечно, пока нас бьют
+	local hm = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if hm and hm.SeatPart then hm.Sit = false; task.wait(0.15) end
+	local t0, limit = os.clock(), 3 + (target - r.Position).Magnitude / (CONFIG.MoveSpeed * 0.5)
 	while true do
 		r = hrp()
-		if not r or not obj.Parent or (stillOk and not stillOk()) then return false end
+		if not r or not obj.Parent or (stillOk and not stillOk()) or os.clock() - t0 > limit then return false end
 		local d = target - r.Position
 		if d.Magnitude < 3 then return true end
 		local step = math.min(d.Magnitude, CONFIG.MoveSpeed * 0.05)
