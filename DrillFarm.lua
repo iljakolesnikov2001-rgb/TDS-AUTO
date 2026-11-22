@@ -1178,6 +1178,11 @@ local function drive()
 	driveStarted = true
 	local seat = drill:FindFirstChild("LocalDriverSeat", true)
 	if seat then pcall(function() seat.ThrottleFloat = 1; seat.Throttle = 1 end) end
+	-- кнопка R (Power Burst, после апгрейда): сервер сам держит перезарядку, просто пробуем раз в 3 с
+	if (drill:GetAttribute("PowerBurst") or 0) > 0 and os.clock() > (DF_boostNext or 0) then
+		DF_boostNext = os.clock() + 3 -- глобал: лимит локалов
+		if driveCall("ActivateBoost") then status("[Drive] Power Burst (R)") end
+	end
 end
 
 local refuelNext = 0
@@ -1441,6 +1446,7 @@ local function poisoned()
 	return c ~= nil and (c:GetAttribute("IsPoisoned") == true or c:GetAttribute("IsToxicFogPoisoned") == true)
 end
 local dmgHooked = setmetatable({}, { __mode = "k" })
+lastHitAt = 0
 task.spawn(function()
 	while Running do
 		local h = hum()
@@ -1449,6 +1455,7 @@ task.spawn(function()
 			local last = h.Health
 			table.insert(Connections, h.HealthChanged:Connect(function(v)
 				if v < last - 1 then
+					lastHitAt = os.clock()
 					local near = {}
 					for _, m in ipairs(enemies(40)) do table.insert(near, m.Name .. "@" .. math.floor(dist(m))) end
 					if #near == 0 then -- кто бьёт издалека: ближайший живой моб в 300 st (включая пропущенных)
@@ -1533,8 +1540,22 @@ local function heal(belowPct)
 			if t.Parent ~= player.Character then pcall(function() eq:InvokeServer(t) end); task.wait(0.3) end
 			local at = gameTool()
 			local h0 = h.Health
+			-- лечимся в 500 st над землёй: туда мобы не достают и бинт не сбивают
+			if h.SeatPart then driveStop() end
+			local r0 = hrp()
+			local back = r0 and r0.CFrame
+			local hold = back and RunService.Heartbeat:Connect(function()
+				local r = hrp()
+				if r then r.Anchored = false; r.AssemblyLinearVelocity = Vector3.zero; r.CFrame = back + Vector3.new(0, 500, 0) end
+			end)
+			task.wait(0.2)
 			if at and at.Consume then pcall(at.Consume, at) end
 			task.wait((t:GetAttribute("UseTime") or 1) + 0.3)
+			if hold then
+				hold:Disconnect()
+				local r = hrp()
+				if r then r.AssemblyLinearVelocity = Vector3.zero; r.CFrame = back end
+			end
 			healNext = os.clock() + 0.5
 			if h.Health > h0 then
 				Stats.heals = (Stats.heals or 0) + 1
@@ -2419,6 +2440,7 @@ local function autoStep()
 		local f0 = d0 and d0:GetAttribute(CONFIG.FuelAttr) or 0
 		if not State.NoDrive and hpPct() >= 35 and not poisoned() and d0 and f0 >= CONFIG.DriveMinFuel and not drillStuck(pos(d0))
 			and #enemies(16, pos(d0)) == 0 and #enemies(12) == 0
+			and not gateNear(pos(d0)) -- рядом недолутанный данж: восстанавливаемся и возвращаемся, а не уезжаем
 			and not finalWallAhead(pos(d0)) then
 			heal(CONFIG.GuardHpPct)
 			Phase = "Мало HP — уезжаю от мобов"
