@@ -15,6 +15,8 @@ local CONFIG = {
 	DriveMinFuel     = 3,
 	MedkitStock      = 6,     -- держать аптечек в запасе (покупаются в магазине крепости)
 	SellFarPct       = 85,   -- сумка заполнена на N% — продаём даже на дальнем столе
+	SaveGearOnStall  = true, -- бур не продвигается N минут — уносим лучшее через алтарь Save Gear (бесплатно, конец захода)
+	SaveGearStallMin = 8,
 	SellAtPct        = 70,   -- продаём, когда сумка заполнена на N% и стол продажи рядом с буром
 	DungeonRadius    = 250,  -- в подземелье: монстры/сундуки/лут в этом радиусе
 	KillRadius       = 80,   -- Kill Aura
@@ -2451,6 +2453,113 @@ local function coinsCache2()
 end
 local trackedDungeonRun, noDriveIdle -- ниже (раздел DUNGEON FARM)
 AS.wallSeen = setmetatable({}, { __mode = "k" })
+
+-- SAVE GEAR: алтарь в церкви (~50 000 м и ~100 000 м) бесплатно уносит до Limit вещей в лобби и завершает заход.
+-- Только живым через PlayerService.SaveGear; после смерти это покупка за Robux (PromptSaveGearPurchase) — её не трогаем.
+;(function()
+	AS.altars = getgenv and (getgenv().DF_Altars or {}) or {}
+	if getgenv then getgenv().DF_Altars = AS.altars end
+	local function note(p)
+		if p:IsA("ProximityPrompt") and p.ActionText == "Save Gear" then
+			local ok, at = pcall(function() return p.Parent:IsA("Attachment") and p.Parent.WorldPosition or p.Parent.Position end)
+			if ok then AS.altars[math.floor(at.X / 50) .. ":" .. math.floor(at.Z / 50)] = at end
+		end
+	end
+	for _, d in ipairs(workspace:GetDescendants()) do if d:IsA("ProximityPrompt") then note(d) end end
+	table.insert(Connections, workspace.DescendantAdded:Connect(function(d) if d:IsA("ProximityPrompt") then task.defer(note, d) end end))
+
+	local function findPrompt(near)
+		for _, d in ipairs(workspace:GetDescendants()) do
+			if d:IsA("ProximityPrompt") and d.ActionText == "Save Gear" then
+				local ok, at = pcall(function() return d.Parent.WorldPosition end)
+				if ok and (not near or (at - near).Magnitude < 300) then return d, at end
+			end
+		end
+	end
+	-- что берём: вся броня, лучший меч, лучшая кирка, 1 ревайв-кит, дальше — по цене
+	local function selection(ch)
+		local tools = {}
+		for _, src in ipairs({ player:FindFirstChild("Backpack"), player.Character }) do
+			for _, t in ipairs(src and src:GetChildren() or {}) do
+				local id = t:GetAttribute("SessionSnapshotItemId") or t:GetAttribute("CarryItemId")
+				if id then tools[id] = t end
+			end
+		end
+		local function val(it) local t = tools[it.Id]; return t and (t:GetAttribute("Value") or t:GetAttribute("Cost")) or 0 end
+		local function kind(it)
+			local t, n = tools[it.Id], it.Name or ""
+			if tostring(it.Id):sub(1, 6) == "armor:" or (t and t:GetAttribute("Category") == "Armor") then return "armor" end
+			if n:find("Revive") then return "revive" end
+			if n:find("Pickaxe") or (t and t:GetAttribute("Class") == "Pickaxe") then return "pick" end
+			if t and t:GetAttribute("Category") == "Melee" or n:find("Sword") then return "melee" end
+			return "other"
+		end
+		local items = ch.Items or {}
+		table.sort(items, function(a, b) return val(a) > val(b) end)
+		local sel, n, limit = {}, 0, ch.Limit or 0
+		local function add(it, cnt)
+			cnt = math.min(cnt, limit - n, (it.Count or 1) - (sel[it.Id] or 0))
+			if cnt > 0 then sel[it.Id] = (sel[it.Id] or 0) + cnt; n += cnt end
+		end
+		for _, it in ipairs(items) do if kind(it) == "armor" then add(it, it.Count or 1) end end
+		for _, k in ipairs({ "melee", "pick", "revive" }) do
+			for _, it in ipairs(items) do if kind(it) == k then add(it, 1); break end end
+		end
+		for _, it in ipairs(items) do add(it, it.Count or 1) end
+		return sel, n
+	end
+	AS.saveSelection = selection
+
+	-- бур не продвигается CONFIG.SaveGearStallMin минут — уносим лучшее через ближайший алтарь
+	AS.saveStep = function(dp)
+		if not CONFIG.SaveGearOnStall or State.NoDrive then return false end
+		-- бур едет или ломает финальную стену (её HP падает) — это прогресс
+		if not AS.stallX or math.abs(dp.X - AS.stallX) > 60 or os.clock() - AS.wallHitAt < 60 then AS.stallX, AS.stallAt = dp.X, os.clock(); return false end
+		if os.clock() - AS.stallAt < CONFIG.SaveGearStallMin * 60 or os.clock() < (AS.saveNext or 0) then return false end
+		AS.saveNext = os.clock() + 120
+		Phase = "Бур не продвигается — сохраняю вещи на алтаре"
+		status(("[Save] бур стоит %d мин — ищу алтарь Save Gear"):format(CONFIG.SaveGearStallMin))
+		driveStop()
+		local r = hrp()
+		if not r then return true end
+		local function hold(p, secs)
+			local t0 = os.clock()
+			while os.clock() - t0 < secs do
+				local rr = hrp()
+				if not rr then return end
+				rr.Anchored = false; rr.AssemblyLinearVelocity = Vector3.zero; rr.CFrame = CFrame.new(p)
+				RunService.Heartbeat:Wait()
+			end
+		end
+		-- ближайший известный алтарь; нет — облетаем путь назад от бура
+		local best
+		for _, at in pairs(AS.altars) do if not best or (at - dp).Magnitude < (best - dp).Magnitude then best = at end end
+		if not best then
+			for x = dp.X - 300, dp.X - 30000, -800 do
+				local p = Vector3.new(x, 150, -772)
+				pcall(function() player:RequestStreamAroundAsync(p, 3) end)
+				hold(p, 1)
+				local _, at = findPrompt()
+				if at then best = at; break end
+			end
+		end
+		if not best then status("[Save] алтарь не найден"); return true end
+		pcall(function() player:RequestStreamAroundAsync(best, 5) end)
+		hold(best + Vector3.new(0, 3, 0), 1.5)
+		local prompt = findPrompt(best)
+		if prompt and fireproximityprompt then pcall(fireproximityprompt, prompt) end
+		task.wait(0.5)
+		local ok, ch = pcall(function() return knit("PlayerService", "GetSaveGearChoices"):InvokeServer() end)
+		if not (ok and type(ch) == "table") then status("[Save] список вещей не получен: " .. tostring(ch)); return true end
+		local sel, n = selection(ch)
+		local names = {}
+		for _, it in ipairs(ch.Items or {}) do if sel[it.Id] then table.insert(names, it.Name .. "×" .. sel[it.Id]) end end
+		status(("[Save] сохраняю %d/%d: %s"):format(n, ch.Limit or 0, table.concat(names, ", ")))
+		local ok2, res = pcall(function() return knit("PlayerService", "SaveGear"):InvokeServer(sel) end)
+		status("[Save] результат: " .. tostring(ok2) .. " " .. tostring(res))
+		return true
+	end
+end)()
 local function autoStep()
 	if not alive() then Phase = "Ждём возрождения"; return end
 	if workspace:GetAttribute("InCutScene") == true then Phase = "Катсцена"; return end
@@ -2501,6 +2610,7 @@ local function autoStep()
 	local dp = drill and pos(drill)
 	if not dp then Phase = "Бур не найден"; return end
 	local fp, fuel = fuelPct()
+	if AS.saveStep(dp) then return end
 
 	-- Финальная стена (босс-бар): волна не кончится, пока стена цела. Бур, упёршийся в стену, ломает её сам,
 	-- пока есть топливо, — водитель не нужен. Поэтому: доезжаем до стены, а пока её HP падает — сидим в укрытии
@@ -3523,6 +3633,6 @@ getgenv().DF = { State = State, CONFIG = CONFIG, Stats = Stats, status = status,
 	drive = drive, driveStop = driveStop, refuel = refuel, fuelPct = fuelPct, fuelTools = fuelTools,
 	upgradeStep = upgradeStep, skipCutscene = skipCutscene, autoStep = autoStep, lootStep = lootStep,
 	gateNear = gateNear, enterGate = enterGate, exitDungeon = exitDungeon, dungeonRun = dungeonRun,
-	finalWallAhead = finalWallAhead, oldGear = oldGear, shopStep = shopStep, armorStep = armorStep, smeltStep = smeltStep, phase = function() return Phase end }
+	finalWallAhead = finalWallAhead, oldGear = oldGear, AS = AS, shopStep = shopStep, armorStep = armorStep, smeltStep = smeltStep, phase = function() return Phase end }
 status("[DrillFarm] Загружен")
 end)()
