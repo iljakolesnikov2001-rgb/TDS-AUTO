@@ -6,7 +6,7 @@
 local CONFIG = {
 	-- Авто-фарм
 	WorkRadius       = 300,  -- сундуки/лут/монстры ищем в этом радиусе от бура (дальше игра телепортирует к буру)
-	GateStopDist     = 300,  -- заходим в подземелья с воротами ближе этого к буру (по горизонтали: ворота стоят сбоку)
+	GateStopDist     = 450,  -- заходим в подземелья с воротами ближе этого к буру (по горизонтали: ворота стоят сбоку)
 	WallStopDist     = 110,  -- перед финальной стеной (при ударе идёт волна врагов) ждём полное HP
 	GuardHpPct       = 40,   -- HP ниже — прячемся под землю
 	SafeHpPct        = 60,   -- выходим из укрытия, когда HP восстановилось
@@ -21,12 +21,14 @@ local CONFIG = {
 	SaveGearOnStall  = true, -- бур не продвигается N минут — уносим лучшее через алтарь Save Gear (бесплатно, конец захода)
 	SaveGearStallMin = 8,
 	SellAtPct        = 70,   -- продаём, когда сумка заполнена на N% и стол продажи рядом с буром
-	DungeonRadius    = 250,  -- в подземелье: монстры/сундуки/лут в этом радиусе
+	DungeonRadius    = 250,
+	DungeonChase     = 2000, -- авто: летим в запомненные непройденные данжи позади бура не дальше этого  -- в подземелье: монстры/сундуки/лут в этом радиусе
 	KillRadius       = 80,   -- Kill Aura
 	KillTimeout      = 30,   -- сек на одного монстра
 	ChestRadius      = 150,
 	ItemsMinValue    = 0,
 	IgnoredItems     = { "Rock", "DeathChest" },
+	CorpseSellOnly   = { "Mole Man" }, -- эти трупы только продаём, в топливо никогда
 	-- порядок покупки апгрейдов бура (сначала урон по стенам). Карточки за Robux не покупаются никогда.
 	-- порядок покупки апгрейдов бура (тир-лист): сначала строго по списку,
 	UpgradePriority  = { "RPMOverclock", "DrillPower", "PowerBurst", "HealthRegen", "UltraDrill", "MoneyDrill", "MegaDrill", "PowerSlam" },
@@ -1152,7 +1154,8 @@ local function corpses()
 	local inv, out = inventory(), {}
 	for _, e in pairs(inv and inv.Entries or {}) do
 		-- дорогие трупы (Bandit Miner 380) — на продажу; в печь только при почти пустом баке
-		if type(e) == "table" and e.Category == "Corpse" and e.Id and ((e.Value or 0) < 50 or fuelPct() < 20) then table.insert(out, e) end
+		if type(e) == "table" and e.Category == "Corpse" and e.Id and ((e.Value or 0) < 50 or fuelPct() < 20)
+			and not hasKey(tostring(e.DisplayName or e.Name or ""), CONFIG.CorpseSellOnly) then table.insert(out, e) end
 	end
 	return out
 end
@@ -1216,11 +1219,23 @@ local function drive()
 	local seat = drill:FindFirstChild("LocalDriverSeat", true)
 	if seat then pcall(function() seat.ThrottleFloat = 1; seat.Throttle = 1 end) end
 	-- кнопка R (Power Burst, после апгрейда): сервер сам держит перезарядку, просто пробуем раз в 3 с
-	if (drill:GetAttribute("PowerBurst") or 0) > 0 and os.clock() > (DF_boostNext or 0) then
-		DF_boostNext = os.clock() + 3 -- глобал: лимит локалов
-		if driveCall("ActivateBoost") then status("[Drive] Power Burst (R)") end
-	end
 end
+-- Power Burst (R): перезарядка 70 с. Жмём фоном, а не только за рулём — бур ломает стену и без водителя,
+-- а мы в это время дерёмся/в данже. Не сработало — пробуем через 5 с.
+task.spawn(function()
+	while Running do
+		task.wait(1)
+		local d = busy() and getDrill()
+		if d and (d:GetAttribute("PowerBurst") or 0) > 0 and os.clock() > (DF_boostNext or 0) then
+			if driveCall("ActivateBoost") then
+				DF_boostNext = os.clock() + 70 -- глобал: лимит локалов
+				status("[Drive] Power Burst (R)")
+			else
+				DF_boostNext = os.clock() + 5
+			end
+		end
+	end
+end)
 
 local refuelNext = 0
 local enemies -- ниже (бой)
@@ -1439,14 +1454,40 @@ local function hordeKill(m, center)
 	-- у каждого оружия своя дальность (атрибут Range); встаём чуть ближе предела
 	local range = math.max(5, (tool:GetAttribute("Range") or 12) + 1) -- +3 из swing, минус запас 2
 	local t0, hp, last = os.clock(), h.Health, os.clock()
-	local fallback = false
+	local fallback, surrounded = false, false
+	local others, othersAt, dir, dirScore = {}, 0, nil, -1
 	Moving = true
 	while Running and (State.KillAura or busy()) and m.Parent and h.Health > 0 and os.clock() - t0 < 15 and hpPct() >= CONFIG.GuardHpPct do
 		local r, p = hrp(), pos(m)
 		if not (r and p) then break end
-		local away = Vector3.new(p.X - center.X, 0, p.Z - center.Z)
-		away = away.Magnitude > 0.1 and away.Unit or Vector3.new(1, 0, 0)
-		local stand = p + away * range
+		if os.clock() - othersAt > 0.25 then
+			othersAt, others = os.clock(), enemies(40)
+			-- вплотную подошёл другой моб — бьём его, иначе он бьёт нас безнаказанно
+			local c1 = others[1]
+			local h1 = c1 and c1 ~= m and dist(c1) < 8 and dist(m) > dist(c1) + 3 and c1:FindFirstChildOfClass("Humanoid")
+			if h1 then
+				m, h, hp, last, dir = c1, h1, h1.Health, os.clock(), nil
+				p = pos(m)
+				if not p then break end
+			end
+			-- куда встать: из 8 точек вокруг цели на дальности оружия — где дальше всего от остальных мобов
+			local bestA, bestS
+			for i = 0, 7 do
+				local a = i * math.pi / 4
+				local sp = p + Vector3.new(math.cos(a), 0, math.sin(a)) * range
+				local sc = 99
+				for _, o in ipairs(others) do
+					local op = o ~= m and pos(o)
+					if op then sc = math.min(sc, (op - sp).Magnitude) end
+				end
+				if not bestS or sc > bestS then bestA, bestS = a, sc end
+			end
+			-- не прыгаем между точками: меняем, только если новая заметно свободнее
+			if not dir or bestS > dirScore + 4 then dir, dirScore = bestA, bestS else dirScore = bestS end
+			-- окружили: свободной точки нет (везде моб ближе 6 st), и HP уже не полный — бросаем, дальше укрытие
+			if bestS < 6 and hpPct() < CONFIG.SafeHpPct then surrounded = true; break end
+		end
+		local stand = p + Vector3.new(math.cos(dir), 0, math.sin(dir)) * range
 		r.AssemblyLinearVelocity = Vector3.zero
 		r.CFrame = CFrame.lookAt(stand, Vector3.new(p.X, stand.Y, p.Z))
 		swing(tool)
@@ -1460,8 +1501,8 @@ local function hordeKill(m, center)
 	Moving = false
 	if fallback and m.Parent and h.Health > 0 and hpPct() >= CONFIG.GuardHpPct then return DF_killClose(m) end
 	local dead = not m.Parent or h.Health <= 0
-	if dead then Stats.kills += 1 else killSkip[m] = os.clock() + 10 end
-	status(("[Horde] %s: %s за %.1fс (дистанция %d)"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0, range))
+	if dead then Stats.kills += 1 elseif not surrounded then killSkip[m] = os.clock() + 10 end
+	status(("[Horde] %s: %s за %.1fс (дистанция %d)%s"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0, range, surrounded and " — окружили, отхожу" or ""))
 end
 
 -- Одиночная цель: с максимальной дальности оружия, со стороны игрока; не бьётся — hordeKill сам подойдёт вплотную
@@ -1783,7 +1824,7 @@ local function lootOne(center, radius, fuelOnly)
 			if it:GetAttribute("ItemDatabaseId") == "Money_Sack" then want = not fuelOnly and isMySack(it)
 			-- трупы: топливо (5–10) и товар (гоблин 10, Bandit Miner 380): берём для бака или если дорогие
 			elseif it:GetAttribute("Category") == "Corpse" then
-				want = not full and (fuelPct() < 85 or (it:GetAttribute("Value") or 0) >= 50)
+				want = not full and (fuelPct() < 85 or (it:GetAttribute("Value") or 0) >= 50 or hasKey(name, CONFIG.CorpseSellOnly))
 			elseif fuelOnly then want = isFuel and not full
 			else want = not full and (isFuel or ((it:GetAttribute("Value") or 0) >= CONFIG.ItemsMinValue
 				and not hasKey(name, CONFIG.IgnoredItems)))
@@ -2900,27 +2941,10 @@ local function autoStep()
 		if not AS.hordeFight then Phase = ("Орда (%d): восстанавливаюсь"):format(#near); hide("орда у бура: " .. #near, function() return hpPct() < CONFIG.SafeHpPct + 10 end); return end -- ждём тот же порог, с которого выходим в бой, иначе прыгаем туда-обратно
 		Phase = ("Орда (%d): бью по одному"):format(#near)
 		driveStop()
-		-- самый высокий (Goblin Brute) — встаём ему на макушку и бьём сверху: мелкие гоблины туда не достают
-		local tall, th
-		for _, m in ipairs(near) do
-			local ok, _, size = pcall(m.GetBoundingBox, m)
-			if ok and size.Y > 7 and (not th or size.Y > th) then tall, th = m, size.Y end
-		end
-		if tall then
-			killIdx = 1 -- позиция «над макушкой»
-			killOne(tall)
-		else
-			-- остались низкие — бьём крайнего с дистанции, со стороны от толпы
-			local c = Vector3.zero
-			for _, m in ipairs(near) do c += pos(m) or dp end
-			c /= #near
-			local best, bd
-			for _, m in ipairs(near) do
-				local p = pos(m)
-				if p and (not bd or (p - c).Magnitude > bd) then best, bd = m, (p - c).Magnitude end
-			end
-			hordeKill(best, c)
-		end
+		-- ближайший к нам (enemies сортирует по дистанции до игрока): дальние не бьют, ближние — бьют
+		local c = Vector3.zero
+		for _, m in ipairs(near) do c += pos(m) or dp end
+		hordeKill(near[1], c / #near)
 		if hpPct() < CONFIG.GuardHpPct + 5 then AS.hordeFight = false end
 		return
 	end
@@ -2961,6 +2985,19 @@ local function autoStep()
 			return
 		end
 		Phase = "Вход в подземелье"; enterGate(g, key); return
+	end
+	-- фокус на данжах: запомненные непройденные ворота позади бура (прогрузились далеко от бура или бур проехал их,
+	-- пока бот был занят) — летим туда сами. Не чаще раза в 5 с, чтобы не долбить недоступные ворота.
+	if hpPct() >= CONFIG.SafeHpPct and AS.pickGate and os.clock() > (AS.chaseNext or 0) then
+		AS.chaseNext = os.clock() + 5
+		local r = hrp()
+		local best, bk = r and AS.pickGate(dp, function(gg) return gg.pos.X <= dp.X + 150 and flat(gg.pos, dp) <= CONFIG.DungeonChase end)
+		if best then
+			status(("[Dungeon] лечу в непройденный данж: %s (%d st от бура)"):format(best.name, flat(best.pos, dp)))
+			driveStop()
+			AS.farmGate(best, bk, r)
+			return
+		end
 	end
 	if os.clock() > refuelNext and ((fp < CONFIG.FuelTargetPct and (#fuelTools() > 0 or #corpses() > 0)) or (fp < 90 and #corpses() >= 3)) then Phase = "Заправка"; refuel(); return end
 	if sellStep(dp) then return end
@@ -3239,6 +3276,8 @@ local function farmGate(best, bk, r)
 		status(("[Данжи] %s: вход не сработал (попытка %d)"):format(best.name, farmFails[bk]))
 	end
 end
+
+AS.pickGate, AS.farmGate = pickGate, farmGate -- для авто-фарма (фокус на данжах)
 
 -- Без вождения, когда дел у бура нет: данжи рядом с буром, потом руда у бура
 noDriveIdle = function(dp)
