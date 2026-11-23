@@ -1045,7 +1045,10 @@ sellAll = function(sellPart)
 		for _, it in ipairs(folder:GetChildren()) do
 			if not before[it] and not it:HasTag("ShopItem") then -- товар прилавка прогрузился — не наше
 				local rar, cat = it:GetAttribute("Rarity") or "", it:GetAttribute("Category") or ""
-				if DF_keepItem(rar, cat)
+				if it:GetAttribute("HasBounty") then -- bounty-труп: стол не берёт, везём к Ozy
+					pickupItem(it); DF_bountyHeld = (DF_bountyHeld or 0) + 1
+					status("[Sell] bounty-труп — к Ozy: " .. it.Name)
+				elseif DF_keepItem(rar, cat)
 					and not (coal > 0 and it:GetAttribute("ItemDatabaseId") == "Ore_Coal")
 					and not (med and it:GetAttribute("Class") == "Medkit") then
 					pickupItem(it); status("[Sell] выпало не то, вернул: " .. it.Name)
@@ -1072,7 +1075,10 @@ sellAll = function(sellPart)
 				if not before[it] and not it:HasTag("ShopItem") then
 					-- страховка: выпало не то (легендарка/топливо) — поднять обратно
 					local rar, cat = it:GetAttribute("Rarity") or "", it:GetAttribute("Category") or ""
-					if DF_keepItem(rar, cat) then
+					if it:GetAttribute("HasBounty") then
+						pickupItem(it); DF_bountyHeld = (DF_bountyHeld or 0) + 1; failed[target.Id] = true
+						status("[Sell] bounty-труп — к Ozy: " .. it.Name)
+					elseif DF_keepItem(rar, cat) then
 						pickupItem(it)
 						status("[Sell] выпало не то, вернул: " .. it.Name)
 					else
@@ -1395,6 +1401,13 @@ local killSkip = setmetatable({}, { __mode = "k" })
 local Killing = false
 local lastSurface
 
+-- вор: моб несёт наш лут (внутри модели предмет с ItemDatabaseId) — не атакует, убегает; бить первым
+function DF_isThief(m)
+	for _, d in ipairs(m:GetChildren()) do
+		if d:GetAttribute("ItemDatabaseId") or d:FindFirstChildWhichIsA("Model") and d:FindFirstChildWhichIsA("Model"):GetAttribute("ItemDatabaseId") then return true end
+	end
+	return m:GetAttribute("StolenItem") ~= nil or m:GetAttribute("CarryingItem") ~= nil
+end
 -- живые враги в радиусе от center (по умолчанию — от персонажа)
 enemies = function(radius, center)
 	local out, folder, r = {}, workspace:FindFirstChild("Npc"), hrp()
@@ -1403,13 +1416,15 @@ enemies = function(radius, center)
 	for _, m in ipairs(folder:GetChildren()) do
 		local h = m:IsA("Model") and m:FindFirstChild("Humanoid")
 		-- мимики (Health ~1e11) — сундуки-монстры, их не бьём
-		if h and h.Health > 0 and h.MaxHealth < 1e6 and m:GetAttribute("NpcFaction") == "Enemy"
+		if h and h.Health > 0 and h.MaxHealth < 1e6 and (m:GetAttribute("NpcFaction") == "Enemy" or DF_isThief(m))
 			and (killSkip[m] or 0) < os.clock() then
 			local p = pos(m)
 			if p and (radius <= 0 or (p - center).Magnitude <= radius) then table.insert(out, m) end
 		end
 	end
-	table.sort(out, function(a, b) return dist(a) < dist(b) end)
+	local thief = {}
+	for _, m in ipairs(out) do thief[m] = DF_isThief(m) end
+	table.sort(out, function(a, b) if thief[a] ~= thief[b] then return thief[a] end return dist(a) < dist(b) end)
 	return out
 end
 -- Fuel Leech, присосавшийся к буру (Humanoid нет — в enemies не попадает). Глобал: лимит локалов.
@@ -1508,7 +1523,8 @@ local function hordeKill(m, center)
 	local others, othersAt, dir, dirScore = {}, 0, nil, -1
 	local myHp0, losing = hpPct(), false
 	Moving = true
-	while Running and (State.KillAura or busy()) and m.Parent and h.Health > 0 and os.clock() - t0 < 15 and hpPct() >= CONFIG.GuardHpPct do
+	local maxT = DF_isThief(m) and 40 or 15 -- вора догоняем дольше: с ним наш лут
+	while Running and (State.KillAura or busy()) and m.Parent and h.Health > 0 and os.clock() - t0 < maxT and hpPct() >= CONFIG.GuardHpPct do
 		local r, p = hrp(), pos(m)
 		if not (r and p) then break end
 		if os.clock() - othersAt > 0.25 then
@@ -1540,6 +1556,10 @@ local function hordeKill(m, center)
 		end
 		-- бой невыгоден (Mole Man снял 2/3 HP и почти цел): потеряли >25% HP, а у цели >40% — бросаем на 30 с
 		if myHp0 - hpPct() > 25 and h.Health > h.MaxHealth * 0.4 then losing = true; break end
+		-- убегающий (вор) за кадр уходит на несколько st: целимся с упреждением и вплотную
+		local root = m.PrimaryPart or m:FindFirstChild("HumanoidRootPart")
+		local v = root and root.AssemblyLinearVelocity or Vector3.zero
+		if v.Magnitude > 8 then p = p + Vector3.new(v.X, 0, v.Z) * 0.15; range = math.min(range, 5) end
 		local stand = p + Vector3.new(math.cos(dir), 0, math.sin(dir)) * range
 		r.AssemblyLinearVelocity = Vector3.zero
 		r.CFrame = CFrame.lookAt(stand, Vector3.new(p.X, stand.Y, p.Z))
@@ -2096,7 +2116,8 @@ DF_bountyStep = function(center)
 	local pad, bd
 	for _, p in ipairs(pads) do
 		local d = flat(p.Position, center)
-		if d <= CONFIG.WorkRadius and (not bd or d < bd) then pad, bd = p, d end
+		-- лагерь Ozy далеко: летим туда, только когда на столе уже нашлись bounty-трупы
+		if (d <= CONFIG.WorkRadius or (DF_bountyHeld or 0) >= 3) and (not bd or d < bd) then pad, bd = p, d end
 	end
 	if not pad then return false end
 	-- выброс всех трупов ради проверки метки стоит ~15 с; не принесло монет — следующая попытка через 5 мин
@@ -2126,7 +2147,9 @@ DF_bountyStep = function(center)
 	end
 	task.wait(sold > 0 and 3 or 0)
 	local c1 = call("CurrencyService", "GetCurrency")
-	DF_bountyNext = os.clock() + ((type(c1) == "number" and type(c0) == "number" and c1 > c0) and 0 or 300)
+	-- платят валютой Bounty, не монетами: успех — хоть один bounty-труп остался на квадрате
+	DF_bountyNext = os.clock() + ((sold > 0 or (type(c1) == "number" and type(c0) == "number" and c1 > c0)) and 0 or 300)
+	if sold > 0 then DF_bountyHeld = 0 end
 	status(("[Bounty] выкинул %d трупов, bounty %d, без bounty вернул %d, монеты %s → %s"):format(#list, sold, back, tostring(c0), tostring(c1)))
 	return true
 end
@@ -2154,6 +2177,7 @@ local function sellStep(center, force)
 	local ok, err = pcall(sellAll, best)
 	Selling = false
 	if ok then Stats.sells += 1 else status("[Sell] ошибка: " .. tostring(err)) end
+	if (DF_bountyHeld or 0) >= 3 then DF_bountyNext = 0; pcall(DF_bountyStep, center) end
 	sellNext = os.clock() + 20
 	DF_sellLeft = bagUsage() -- глобал: у главного блока лимит 200 локальных
 	return true
@@ -2669,7 +2693,16 @@ local function dungeonRun()
 	if not r then return end
 	-- игра/огненный страж/смерть выкинули наружу: иначе бьём мобов у бура в режиме «данж» бесконечно
 	-- (волна идёт у самих ворот, снаружи — рядом с воротами это ещё данж)
-	local function away(p) return not inZone(p) and not (curGate and curGate.Parent and flat(curGate:GetPivot().Position, p) < 300) end
+	local function away(p)
+		if inZone(p) or not (curGate and curGate.Parent) then return not inZone(p) end
+		-- рядом с воротами, ареной или любой частью модели данжа — ещё внутри (арена бывает далеко от ворот)
+		if flat(curGate:GetPivot().Position, p) < 300 then return false end
+		local ac = dungeonCenter()
+		if ac and flat(ac, p) < 450 then return false end
+		local cf, size = curGate:GetBoundingBox()
+		local lp = cf:PointToObjectSpace(p)
+		return math.abs(lp.X) > size.X / 2 + 150 or math.abs(lp.Z) > size.Z / 2 + 150
+	end
 	if away(r.Position) then
 		task.wait(1)
 		r = hrp()
