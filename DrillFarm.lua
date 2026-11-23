@@ -916,6 +916,9 @@ local function oldGear()
 		slot = slot == "Head" and "Helmet" or slot
 		local have, a = c and slot and c:GetAttribute(slot), t:GetAttribute("Armor") or 0
 		if type(have) ~= "number" or a > have then return false end
+		-- броня с бонусом к мешку (Hoarder) — не продаём: вместимость важнее брони
+		if tostring(t:GetAttribute("DisplayName") or t.Name):find("Hoarder") then return false end
+		for k in pairs(t:GetAttributes()) do if k:find("Capacity") then return false end end
 		local h = c:FindFirstChildOfClass("Humanoid")
 		return a < have or (t:GetAttribute("SpeedBoost") or 0) <= (h and h:GetAttribute("SpeedBoost") or 0)
 	end
