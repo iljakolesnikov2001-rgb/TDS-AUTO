@@ -3068,6 +3068,9 @@ end
 	-- лететь к ближайшему алтарю, сохранить лучшие вещи (сервер завершает заход и кидает в лобби); true = SaveGear вызван
 	-- direct = сразу SaveGear без полёта к алтарю (проверено: сервер принимает и на ~6 000 м, вдали от алтаря)
 	AS.saveNow = function(dp, direct)
+		local hh = hum()
+		-- мёртвым SaveGear платный (Robux) — никогда
+		if not hh or hh.Health <= 0 then status("[Save] персонаж мёртв — сохранение пропущено"); return false end
 		driveStop()
 		local r = hrp()
 		if not r then return false end
