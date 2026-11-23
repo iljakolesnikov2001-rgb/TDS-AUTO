@@ -3678,17 +3678,42 @@ local loops = {
 	end,
 	SkipCutscenes = skipCutscene,
 }
-for name, fn in pairs(loops) do
-	task.spawn(function()
+-- сторож: шаг цикла висит > 30 с (где-то вечное ожидание) — пишем, где завис, и перезапускаем цикл;
+-- при мало HP сначала выдёргиваем персонажа вверх (23.11: завис в данже на 220 с и умер без единой строки лога)
+local loopCo, loopAt = {}, {}
+local function startLoop(name, fn)
+	loopCo[name] = task.spawn(function()
 		while Running do
 			if State[name] and not Selling then
+				loopAt[name] = os.clock()
 				local ok, err = pcall(fn)
+				loopAt[name] = nil
 				if not ok then status("[Ошибка] " .. name .. ": " .. tostring(err)); task.wait(1) end
 			end
 			task.wait(CONFIG.Tick)
 		end
 	end)
 end
+for name, fn in pairs(loops) do startLoop(name, fn) end
+task.spawn(function()
+	while Running do
+		task.wait(5)
+		for name, at in pairs(loopAt) do
+			-- у сторожа свой поток: шаги с долгим ожиданием (паучья яма 40 с, укрытие 90 с) не трогаем
+			if os.clock() - at > 120 or (os.clock() - at > 30 and hpPct() < CONFIG.GuardHpPct and not Hiding) then
+				local co = loopCo[name]
+				status(("[Watchdog] %s завис на %.0f с, HP %.0f%%: %s"):format(name, os.clock() - at, hpPct(),
+					(co and debug.traceback(co) or "?"):gsub("%s+", " "):sub(1, 400)))
+				pcall(task.cancel, co)
+				loopAt[name] = nil
+				Moving, Killing, Selling = false, false, false
+				local r = hrp()
+				if r and hpPct() < CONFIG.SafeHpPct then r.AssemblyLinearVelocity = Vector3.zero; r.CFrame = r.CFrame + Vector3.new(0, 500, 0) end
+				startLoop(name, loops[name])
+			end
+		end
+	end
+end)
 task.spawn(function()
 	while Running do pcall(highlightStep); task.wait(1) end
 end)
