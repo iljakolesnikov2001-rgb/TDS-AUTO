@@ -2607,6 +2607,9 @@ local AS = { progAt = 0, farShopNext = 0, coinsAt2 = 0, farSellNext = 0, fogSell
 -- Берём только лучший по Value меч, кирку и броню на каждый слот; остальное остаётся в ящике.
 AS.crateClaim = function()
 	if getgenv().DF_CrateJob == game.JobId then return end
+	-- только в начале забега (стартовые 100 монет): после переподключения сервер новый, а забег тот же
+	local coins = call("CurrencyService", "GetCurrency")
+	if type(coins) ~= "number" or coins > 100 then getgenv().DF_CrateJob = game.JobId; return end
 	local items = call("PlayerService", "GetCrateItems")
 	if type(items) ~= "table" or #items == 0 then return end
 	local DB = require(RS.Shared.ItemDatabase)
