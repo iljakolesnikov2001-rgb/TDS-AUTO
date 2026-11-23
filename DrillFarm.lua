@@ -3707,12 +3707,13 @@ local loops = {
 -- через SaveGear (бесплатно только живым; после смерти это Robux) — сервер кидает в лобби. Свой поток на
 -- каждый кадр: не зависит от основного цикла (23.11 он завис, и бот умер, не реагируя)
 task.spawn(function()
-	local fired = false
+	local fired = nil
 	while Running do
 		RunService.Heartbeat:Wait()
 		local h = hum()
-		if not fired and State.Auto and CONFIG.EmergencyHpPct > 0 and h and h.Health > 0 and hpPct() <= CONFIG.EmergencyHpPct then
-			fired = true
+		-- всегда, даже если все режимы выключены; один раз на персонажа (новый забег — снова готов)
+		if fired ~= player.Character and CONFIG.EmergencyHpPct > 0 and h and h.Health > 0 and hpPct() <= CONFIG.EmergencyHpPct then
+			fired = player.Character
 			-- первым делом SaveGear (каждая доля секунды — урон); подъём вверх тем же кадром, режимы — после
 			local r = hrp()
 			local p = r and r.Position
