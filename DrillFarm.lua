@@ -13,8 +13,8 @@ local CONFIG = {
 	FuelTargetPct    = 50,   -- заправляем, когда топлива меньше (если в рюкзаке есть канистра)
 	FuelSearchRadius = 500,  -- топливо почти кончилось, канистр нет — ищем дальше
 	DriveMinFuel     = 3,
-	MedkitStock      = 6,     -- держать аптечек в запасе (покупаются в магазине крепости)
-	BandageStock     = 20,    -- бинтов (дешёвые, 10 монет) держать до стольких, сверх MedkitStock
+	MedkitStock      = 4,     -- держать аптечек в запасе (покупаются в магазине крепости)
+	BandageStock     = 8,     -- бинтов (дешёвые, 10 монет) держать до стольких, сверх MedkitStock
 	ShopRestock      = 300,   -- каждый магазин обновляет товар раз в 5 минут
 	BandageRunDist   = 6000,  -- за бинтами в запомненный магазин летаем не дальше этого от бура
 	SellFarPct       = 85,   -- сумка заполнена на N% — продаём даже на дальнем столе
@@ -1629,6 +1629,36 @@ local function medkits()
 	table.sort(out, function(a, b) return (a:GetAttribute("Health") or 0) < (b:GetAttribute("Health") or 0) end)
 	return out
 end
+-- аптечки лежат стопками (один Tool, MedicalStackCount=17): считаем штуки, а не инструменты
+function DF_medCount(band)
+	local n = 0
+	for _, t in ipairs(medkits()) do
+		if (t.Name:find("Bandage") ~= nil) == band then n += t:GetAttribute("MedicalStackCount") or 1 end
+	end
+	return n
+end
+-- мешок забит аптечками сверх запаса (они тоже занимают место) — выкинуть по одной, чтобы поднять топливо
+function DF_dropExtraMed()
+	local eq, drop = knit("ToolService", "EquipTool"), knit("ToolService", "Drop")
+	if not (eq and drop) then return false end
+	for _, band in ipairs({ true, false }) do
+		local extra = DF_medCount(band) - (band and CONFIG.BandageStock or CONFIG.MedkitStock)
+		if extra > 0 then
+			for _, t in ipairs(medkits()) do
+				if (t.Name:find("Bandage") ~= nil) == band then
+					local n = math.min(extra, 5)
+					for _ = 1, n do
+						pcall(function() eq:InvokeServer(t) end); task.wait(0.3)
+						pcall(function() drop:InvokeServer() end); task.wait(0.3)
+					end
+					status(("[Bag] мешок полон — выкинул лишних %s: %d"):format(t.Name, n))
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
 local healNext = 0
 local function heal(belowPct)
 	if os.clock() < healNext or hpPct() >= belowPct then return false end
@@ -2047,10 +2077,8 @@ gearGain = function(it)
 		-- запас аптечек: до MedkitStock штук, выгоднее — больше HP за монету
 		local band = it.Name:find("Bandage") ~= nil
 		if band then
-			local n = 0
-			for _, t in ipairs(medkits()) do if t.Name:find("Bandage") then n += 1 end end
-			if n >= CONFIG.BandageStock then return nil end
-		elseif #medkits() >= CONFIG.MedkitStock then return nil end
+			if DF_medCount(true) >= CONFIG.BandageStock then return nil end
+		elseif DF_medCount(false) >= CONFIG.MedkitStock then return nil end
 		-- дорогие аптечки (Golden за 1000) — только если монет много: апгрейды бура важнее
 		if (it:GetAttribute("Cost") or 0) > math.max(100, shopCoins * 0.15) then return nil end
 		return (it:GetAttribute("Health") or 0.1) * 100 / math.max(it:GetAttribute("Cost") or 1, 1) * 0.05
@@ -2661,7 +2689,7 @@ AS.bandageRun = function(dp, force)
 	if not force and os.clock() < AS.bandNext then return false end
 	AS.bandNext = os.clock() + 20
 	local n = 0
-	for _, t in ipairs(medkits()) do if t.Name:find("Bandage") then n += 1 end end
+	n = DF_medCount(true)
 	if n >= CONFIG.BandageStock or (coinsCache2() or 0) < 10 then return false end
 	local best, bd
 	for _, fo in ipairs(forts) do
@@ -3108,6 +3136,7 @@ local function autoStep()
 			return
 		end
 	end
+	if fuel < CONFIG.DriveMinFuel and bagFull() and DF_dropExtraMed() then return end
 	if fuel < CONFIG.DriveMinFuel then driveStop(); Phase = "Нет топлива — жду канистры"; return end
 
 	local w = finalWallAhead(dp)
