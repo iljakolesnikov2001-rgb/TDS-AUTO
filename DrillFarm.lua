@@ -3075,6 +3075,19 @@ local function autoStep()
 				else DF_boostNext = os.clock() + 5 end
 				return
 			end
+			-- бур ломает стену сам — время не терять: продать, подобрать лут, открыть сундуки у бура (если HP позволяет)
+			if hpPct() >= 70 and #enemies(30) <= 1 then
+				-- стол может быть далеко — всё равно летим (бур ломает стену минуту-три), но не чаще раза в минуту
+				local bu, bc = bagUsage()
+				if bu and bc and bc > 0 and bu / bc >= 0.4 and os.clock() > (AS.wallSellAt or 0) then
+					AS.wallSellAt = os.clock() + 60
+					Phase = "Стена ломается — продаю"
+					if sellStep(dp, true) then return end
+				end
+				-- по всей прогруженной карте: дорогое и близкое — первым (lootOne взвешивает цену и расстояние)
+				if chestStep(dp, 3000) then Phase = "Стена ломается — сундуки"; return end
+				if lootStep(dp, 3000) then Phase = "Стена ломается — собираю лут"; return end
+			end
 			-- HP много, а у бура волна — не прячемся, а бьём (их трупы — топливо для стены); ниже обычный бой у бура
 			if not (hpPct() >= 80 and #enemies(45, dp) > 0) then
 				Phase = ("Бур ломает стену сам (%s HP) — жду в укрытии"):format(tostring(wall:GetAttribute("Health")))
