@@ -1983,6 +1983,8 @@ DF_bountyStep = function(center)
 		if d <= CONFIG.WorkRadius and (not bd or d < bd) then pad, bd = p, d end
 	end
 	if not pad then return false end
+	-- выброс всех трупов ради проверки метки стоит ~15 с; не принесло монет — следующая попытка через 5 мин
+	if os.clock() < (DF_bountyNext or 0) then return false end
 	local list = {}
 	for _, e in ipairs(invEntries()) do if e.Category == "Corpse" and not hasKey(tostring(e.Rarity or ""), CONFIG.SellKeepRarity) then table.insert(list, e) end end
 	if #list == 0 then return false end
@@ -2006,7 +2008,9 @@ DF_bountyStep = function(center)
 			if it:GetAttribute("HasBounty") then sold += 1 else back += 1; pickupItem(it) end
 		end
 	end
+	task.wait(sold > 0 and 3 or 0)
 	local c1 = call("CurrencyService", "GetCurrency")
+	DF_bountyNext = os.clock() + ((type(c1) == "number" and type(c0) == "number" and c1 > c0) and 0 or 300)
 	status(("[Bounty] выкинул %d трупов, bounty %d, без bounty вернул %d, монеты %s → %s"):format(#list, sold, back, tostring(c0), tostring(c1)))
 	return true
 end
