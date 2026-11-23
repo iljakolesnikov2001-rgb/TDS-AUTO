@@ -16,7 +16,7 @@ local CONFIG = {
 	MedkitStock      = 6,     -- держать аптечек в запасе (покупаются в магазине крепости)
 	BandageStock     = 20,    -- бинтов (дешёвые, 10 монет) держать до стольких, сверх MedkitStock
 	ShopRestock      = 300,   -- каждый магазин обновляет товар раз в 5 минут
-	BandageRunDist   = 2500,  -- за бинтами в запомненный магазин летаем не дальше этого от бура
+	BandageRunDist   = 6000,  -- за бинтами в запомненный магазин летаем не дальше этого от бура
 	SellFarPct       = 85,   -- сумка заполнена на N% — продаём даже на дальнем столе
 	SaveGearOnStall  = true, -- бур не продвигается N минут — уносим лучшее через алтарь Save Gear (бесплатно, конец захода)
 	SaveGearStallMin = 8,
@@ -2567,34 +2567,57 @@ local function coinsCache2()
 	if os.clock() - AS.coinsAt2 > 5 then AS.coinsAt2 = os.clock(); local c = call("CurrencyService", "GetCurrency"); if type(c) == "number" then AS.coinsVal2 = c end end
 	return AS.coinsVal2
 end
--- Бинты по всем магазинам: запоминаем каждую кассу (BuyPart), мимо которой проехали, и когда там были;
--- товар обновляется раз в ShopRestock — тогда, если бинтов мало, летим туда снова.
-AS.shops = getgenv and (getgenv().DF_Shops or {}) or {}
-if getgenv then getgenv().DF_Shops = AS.shops end
+-- Бинты по всем магазинам: магазин есть в каждой крепости (Workspace.Chunks.Fortresses, модели не выгружаются,
+-- а касса BuyPart прогружается только рядом). Товар обновляется раз в ShopRestock — тогда, если бинтов мало,
+-- летим в ближайшую пройденную крепость, ждём прогрузки кассы и покупаем.
+AS.shopAt = getgenv and (getgenv().DF_ShopAt or {}) or {}
+if getgenv then getgenv().DF_ShopAt = AS.shopAt end
 AS.bandNext = 0
-AS.bandageRun = function(dp)
-	for _, b in ipairs(CS:GetTagged("BuyPart")) do
-		if b:IsA("BasePart") and not b:GetFullName():find("CutScene", 1, true) then
-			local k = math.floor(b.Position.X / 50) .. ":" .. math.floor(b.Position.Z / 50)
-			AS.shops[k] = AS.shops[k] or { pos = b.Position, at = 0 }
-			-- касса рядом с буром: shopStep и так проверяет её каждые 10 с
-			if flat(b.Position, dp) <= CONFIG.WorkRadius then AS.shops[k].at = os.clock() end
+AS.bandageRun = function(dp, force)
+	local f = workspace:FindFirstChild("Chunks") and workspace.Chunks:FindFirstChild("Fortresses")
+	if not f then return false end
+	local forts = {}
+	for _, m in ipairs(f:GetChildren()) do
+		-- в некоторых крепостях (Toxic) магазин — декорация без полок GeneralStore_Nodes и кассы
+		local shop = m:FindFirstChild("GeneralStore_Nodes", true) and m:FindFirstChild("Shop", true)
+		local ok, p = pcall(function() return shop:GetPivot().Position end)
+		if ok then
+			-- крепость у бура: её кассу shopStep и так проверяет каждые 10 с
+			if flat(p, dp) <= 400 then AS.shopAt[m.Name] = os.clock() end
+			table.insert(forts, { name = m.Name, pos = p })
 		end
 	end
-	if os.clock() < AS.bandNext then return false end
+	if not force and os.clock() < AS.bandNext then return false end
 	AS.bandNext = os.clock() + 20
 	local n = 0
 	for _, t in ipairs(medkits()) do if t.Name:find("Bandage") then n += 1 end end
-	if n >= CONFIG.BandageStock or (coinsCache2() or 0) < 30 then return false end
+	if n >= CONFIG.BandageStock or (coinsCache2() or 0) < 10 then return false end
 	local best, bd
-	for _, s in pairs(AS.shops) do
-		local d = flat(s.pos, dp)
-		if os.clock() - s.at > CONFIG.ShopRestock and d <= CONFIG.BandageRunDist and (not bd or d < bd) then best, bd = s, d end
+	for _, fo in ipairs(forts) do
+		local d = flat(fo.pos, dp)
+		-- только пройденные крепости (впереди бура — сплошной камень)
+		if fo.pos.X <= dp.X + 50 and d <= CONFIG.BandageRunDist and os.clock() - (AS.shopAt[fo.name] or -1e9) > CONFIG.ShopRestock
+			and (not bd or d < bd) then best, bd = fo, d end
 	end
 	if not best then return false end
-	best.at = os.clock()
-	status(("[Shop] за бинтами в магазин (%d st, бинтов %d)"):format(bd, n))
-	return farShop(best.pos)
+	AS.shopAt[best.name] = os.clock()
+	status(("[Shop] за бинтами: %s (%d st, бинтов %d)"):format(best.name, bd, n))
+	driveStop()
+	local r = hrp()
+	if not r then return false end
+	r.AssemblyLinearVelocity = Vector3.zero
+	r.CFrame = CFrame.new(best.pos + Vector3.new(0, 10, 0))
+	pcall(function() player:RequestStreamAroundAsync(best.pos, 5) end)
+	local t0 = os.clock()
+	repeat
+		task.wait(0.3)
+		local found = false
+		for _, b in ipairs(CS:GetTagged("BuyPart")) do if flat(b.Position, best.pos) < 400 then found = true end end
+		if found then break end
+	until os.clock() - t0 > 6
+	local ok = farShop(best.pos)
+	if not ok then status("[Shop] " .. best.name .. ": бинтов нет или касса не прогрузилась") end
+	return true
 end
 local trackedDungeonRun, noDriveIdle -- ниже (раздел DUNGEON FARM)
 AS.wallSeen = setmetatable({}, { __mode = "k" })
@@ -2784,6 +2807,8 @@ local function autoStep()
 		if not inDungeon() and #medkits() == 0 and os.clock() > AS.farShopNext and (coinsCache2() or 0) >= 10 then
 			AS.farShopNext = os.clock() + 60
 			if farShop(hrp() and hrp().Position or Vector3.zero) then heal(CONFIG.SafeHpPct); return end
+			local dd = getDrill()
+			if dd and AS.bandageRun(pos(dd), true) then heal(CONFIG.SafeHpPct); return end
 		end
 		local d0 = getDrill()
 		local f0 = d0 and d0:GetAttribute(CONFIG.FuelAttr) or 0
