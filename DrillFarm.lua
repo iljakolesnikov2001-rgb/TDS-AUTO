@@ -2991,8 +2991,9 @@ local function autoStep()
 	if hpPct() >= CONFIG.SafeHpPct and AS.pickGate and os.clock() > (AS.chaseNext or 0) then
 		AS.chaseNext = os.clock() + 5
 		local r = hrp()
-		local best, bk = r and AS.pickGate(dp, function(gg) return gg.pos.X <= dp.X + 150 and flat(gg.pos, dp) <= CONFIG.DungeonChase end)
-		if best then
+		local best, bk -- (r and f() обрезал бы второе значение — ключ ворот)
+		if r then best, bk = AS.pickGate(dp, function(gg) return gg.pos.X <= dp.X + 150 and flat(gg.pos, dp) <= CONFIG.DungeonChase end) end
+		if best and bk then
 			status(("[Dungeon] лечу в непройденный данж: %s (%d st от бура)"):format(best.name, flat(best.pos, dp)))
 			driveStop()
 			AS.farmGate(best, bk, r)
