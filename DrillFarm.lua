@@ -13,8 +13,8 @@ local CONFIG = {
 	FuelTargetPct    = 50,   -- заправляем, когда топлива меньше (если в рюкзаке есть канистра)
 	FuelSearchRadius = 500,  -- топливо почти кончилось, канистр нет — ищем дальше
 	DriveMinFuel     = 3,
-	MedkitStock      = 4,     -- держать аптечек в запасе (покупаются в магазине крепости)
-	BandageStock     = 8,     -- бинтов (дешёвые, 10 монет) держать до стольких, сверх MedkitStock
+	MedkitStock      = 12,    -- держать аптечек в запасе (покупаются в магазине крепости)
+	BandageStock     = 3,     -- бинтов (дешёвые, 10 монет) держать до стольких, сверх MedkitStock
 	ShopRestock      = 300,   -- каждый магазин обновляет товар раз в 5 минут
 	BandageRunDist   = 6000,  -- за бинтами в запомненный магазин летаем не дальше этого от бура
 	SellFarPct       = 85,   -- сумка заполнена на N% — продаём даже на дальнем столе
@@ -55,6 +55,7 @@ local CONFIG = {
 	HighlightColor   = Color3.fromRGB(255, 60, 60),
 	SellKeepRarity   = { "Legendary", "Mythic", "Exotic", "Secret", "Divine" }, -- не продавать
 	SellKeepCategory = { "Fuel", "Consumable" },  -- топливо не продаём
+	CoalKeep         = 5,    -- угля в мешке держим столько, лишний продаём
 	MoveSpeed        = 540,  -- студов/сек при перелёте
 	PickupDelay      = 0.05,
 	Tick             = 0.25,
@@ -779,9 +780,12 @@ local function invEntries()
 	return list
 end
 
+-- редкость бережём только у снаряжения: легендарный хлам (Diamond Goblet, 1000) — просто деньги и слот мешка
+function DF_keepItem(rar, cat)
+	return (hasKey(rar, CONFIG.SellKeepRarity) and cat ~= "Scrap") or hasKey(cat, CONFIG.SellKeepCategory)
+end
 local function sellable(e)
-	return not hasKey(tostring(e.Rarity or ""), CONFIG.SellKeepRarity)
-		and not hasKey(tostring(e.Category or ""), CONFIG.SellKeepCategory)
+	return not DF_keepItem(tostring(e.Rarity or ""), tostring(e.Category or ""))
 end
 
 local function tryDrop(e)
@@ -1006,11 +1010,14 @@ sellAll = function(sellPart)
 			pcall(function() dropRf:InvokeServer(e.Id) end)
 			if i % 5 == 0 then task.wait(0.05) end
 		end
+		local coal = DF_dropExtraCoal()
+		if coal > 0 then status(("[Sell] лишний уголь на продажу: %d (оставил %d)"):format(coal, CONFIG.CoalKeep)) end
 		task.wait(0.4)
 		for _, it in ipairs(folder:GetChildren()) do
-			if not before[it] then
+			if not before[it] and not it:HasTag("ShopItem") then -- товар прилавка прогрузился — не наше
 				local rar, cat = it:GetAttribute("Rarity") or "", it:GetAttribute("Category") or ""
-				if hasKey(rar, CONFIG.SellKeepRarity) or hasKey(cat, CONFIG.SellKeepCategory) then
+				if DF_keepItem(rar, cat)
+					and not (coal > 0 and it:GetAttribute("ItemDatabaseId") == "Ore_Coal") then
 					pickupItem(it); status("[Sell] выпало не то, вернул: " .. it.Name)
 				else
 					mine[it] = true
@@ -1032,10 +1039,10 @@ sellAll = function(sellPart)
 			status("[Sell] продаю: " .. tostring(target.DisplayName or target.Name))
 			task.wait(0.2)
 			for _, it in ipairs(folder:GetChildren()) do
-				if not before[it] then
+				if not before[it] and not it:HasTag("ShopItem") then
 					-- страховка: выпало не то (легендарка/топливо) — поднять обратно
 					local rar, cat = it:GetAttribute("Rarity") or "", it:GetAttribute("Category") or ""
-					if hasKey(rar, CONFIG.SellKeepRarity) or hasKey(cat, CONFIG.SellKeepCategory) then
+					if DF_keepItem(rar, cat) then
 						pickupItem(it)
 						status("[Sell] выпало не то, вернул: " .. it.Name)
 					else
@@ -1092,12 +1099,14 @@ local function inDungeon() return dungeonActive end
 local function flat(a, b) return Vector3.new(a.X - b.X, 0, a.Z - b.Z).Magnitude end
 -- Внутренности данжей стоят прямо в мире (в стороне от пути бура). Залететь туда без входа через ворота
 -- опасно: мобы бьют, а наш урон не проходит. Зона = круг вокруг внутреннего промпта Exit.
+-- SpiderTunnel — тоже данж (Enter/Exit, мобы и сундуки внутри), только без волн
+function DF_isGate(m) return m.Name:sub(1, #CONFIG.GateName) == CONFIG.GateName or m.Name == "SpiderTunnel" end
 local zoneCache, zoneAt = {}, 0
 local function dungeonZones()
 	if os.clock() - zoneAt < 5 then return zoneCache end
 	zoneAt, zoneCache = os.clock(), {}
 	for _, g in ipairs(workspace:GetChildren()) do
-		if g.Name:sub(1, #CONFIG.GateName) == CONFIG.GateName then
+		if DF_isGate(g) then
 			for _, d in ipairs(g:GetDescendants()) do
 				if d:IsA("ProximityPrompt") and d.ActionText == "Exit" then
 					local p = d.Parent:IsA("Attachment") and d.Parent.WorldPosition or pos(d.Parent)
@@ -1638,6 +1647,30 @@ function DF_medCount(band)
 	return n
 end
 -- мешок забит аптечками сверх запаса (они тоже занимают место) — выкинуть по одной, чтобы поднять топливо
+-- уголь стопкой (MedicalStackCount) занимает слот мешка за каждую штуку: держим CoalKeep, остальное — на стол продажи
+function DF_coalCount()
+	local n = 0
+	for _, t in ipairs(fuelTools()) do if t:GetAttribute("ItemDatabaseId") == "Ore_Coal" or t.Name == "Ore_Coal" then n += t:GetAttribute("MedicalStackCount") or 1 end end
+	return n
+end
+function DF_dropExtraCoal()
+	local eq, drop = knit("ToolService", "EquipTool"), knit("ToolService", "Drop")
+	local extra = DF_coalCount() - CONFIG.CoalKeep
+	if not (eq and drop) or extra <= 0 then return 0 end
+	local done = 0
+	for _, t in ipairs(fuelTools()) do
+		if t.Name == "Ore_Coal" then
+			for _ = 1, extra do
+				if not t.Parent then break end
+				if t.Parent ~= player.Character then pcall(function() eq:InvokeServer(t) end); task.wait(0.2) end
+				if pcall(function() drop:InvokeServer() end) then done += 1 end
+				task.wait(0.2)
+			end
+			break
+		end
+	end
+	return done
+end
 function DF_dropExtraMed()
 	local eq, drop = knit("ToolService", "EquipTool"), knit("ToolService", "Drop")
 	if not (eq and drop) then return false end
@@ -1845,6 +1878,8 @@ end
 local gearGain, wearItem -- ниже (магазин)
 local function lootOne(center, radius, fuelOnly)
 	local full = bagFull()
+	-- уголь занимает слот мешка за каждую штуку (было 15): больше CoalKeep не копим, пока бак не просел
+	local fuelStocked = DF_coalCount() >= CONFIG.CoalKeep and fuelPct() >= 50
 	local best, bd
 	for _, it in ipairs(groundItems()) do
 		local p = pos(it)
@@ -1859,8 +1894,12 @@ local function lootOne(center, radius, fuelOnly)
 			-- трупы: топливо (5–10) и товар (гоблин 10, Bandit Miner 380): берём для бака или если дорогие
 			elseif it:GetAttribute("Category") == "Corpse" then
 				want = not full and (fuelPct() < 85 or (it:GetAttribute("Value") or 0) >= 50 or hasKey(name, CONFIG.CorpseSellOnly))
-			elseif fuelOnly then want = isFuel and not full
-			else want = not full and (isFuel or ((it:GetAttribute("Value") or 0) >= CONFIG.ItemsMinValue
+			elseif it:GetAttribute("Class") == "Medkit" then
+				-- аптечки/бинты с земли — только до нормы (иначе выкинутые лишние тут же подбираем обратно)
+				local band = name:find("Bandage") ~= nil
+				want = not fuelOnly and not full and DF_medCount(band) < (band and CONFIG.BandageStock or CONFIG.MedkitStock)
+			elseif fuelOnly then want = isFuel and not full and not fuelStocked
+			else want = not full and ((isFuel and not fuelStocked) or ((it:GetAttribute("Value") or 0) >= CONFIG.ItemsMinValue
 				and not hasKey(name, CONFIG.IgnoredItems)))
 			end
 			if want then
@@ -2020,7 +2059,7 @@ local function sellStep(center, force)
 	if not force and not (n and cap and cap > 0 and n / cap * 100 >= CONFIG.SellAtPct) then return false end
 	if not force and os.clock() < sellNext then return false end
 	-- после продажи в сумке остаётся непродаваемое (топливо, аптечки, редкое) — снова едем, только когда прибавилось
-	if not force and DF_sellLeft and n <= DF_sellLeft + 2 then return false end
+	if not force and DF_sellLeft and n <= DF_sellLeft + 2 and DF_coalCount() <= CONFIG.CoalKeep then return false end
 	sellNext = os.clock() + 4
 	local best, bd
 	for _, sp in ipairs(findSellParts()) do
@@ -2188,6 +2227,9 @@ local function shopStep(center, far)
 	for _, it in ipairs(workspace.Items:GetChildren()) do
 		local cost = it:GetAttribute("Cost")
 		local p = cost and not shopSkip[it] and CS:HasTag(it, "ShopItem") and not it:FindFirstAncestor("ArmorSaleStand") and pos(it)
+		local bu, bc = bagUsage()
+		-- аптечка/бинт = слот мешка: в почти полный мешок не покупаем
+		if p and it:GetAttribute("Class") == "Medkit" and bu and bc and bu >= bc - 2 then p = nil end
 		if p and cost <= coins and (p - bp.Position).Magnitude < 150 then
 			local g = gearGain(it)
 			if g and (not bestGain or g > bestGain) then best, bestGain = it, g end
@@ -2277,7 +2319,7 @@ local function gateKey(g)
 end
 local function gateNear(center)
 	for _, g in ipairs(workspace:GetChildren()) do
-		if g:IsA("Model") and g.Name:sub(1, #CONFIG.GateName) == CONFIG.GateName then
+		if g:IsA("Model") and DF_isGate(g) then
 			local p, k = pos(g), gateKey(g)
 			if p and k and not gateDone[k] and flat(p, center) <= CONFIG.GateStopDist then return g, k end
 		end
@@ -2346,7 +2388,7 @@ do
 	if r and inZone(r.Position) then
 		local best, bd
 		for _, g in ipairs(workspace:GetChildren()) do
-			if g:IsA("Model") and g.Name:sub(1, #CONFIG.GateName) == CONFIG.GateName then
+			if g:IsA("Model") and DF_isGate(g) then
 				for _, d in ipairs(g:GetDescendants()) do
 					if d:IsA("ProximityPrompt") and d.ActionText == "Exit" then
 						local p = promptPos(d)
@@ -2373,7 +2415,7 @@ local function exitDungeon(why)
 	for _, d in ipairs(workspace:GetDescendants()) do
 		-- только выход из данжа (у SpiderPit тоже есть Exit)
 		if d:IsA("ProximityPrompt") and d.ActionText == "Exit" and (d:GetFullName():find(".Dungeon_", 1, true)
-			or (curPit and d:IsDescendantOf(curPit))) then
+			or (curPit and d:IsDescendantOf(curPit)) or (curGate and d:IsDescendantOf(curGate))) then
 			local p = promptPos(d)
 			local dd = p and r and (p - r.Position).Magnitude
 			if dd and (not bd or dd < bd) then best, bd = d, dd end
@@ -2403,7 +2445,7 @@ local function arenaStep()
 	arenaNext = os.clock() + 2
 	local gates = {}
 	for _, g in ipairs(workspace:GetChildren()) do
-		if g.Name:sub(1, #CONFIG.GateName) == CONFIG.GateName then table.insert(gates, g) end
+		if DF_isGate(g) then table.insert(gates, g) end
 	end
 	for _, g in ipairs(gates) do for _, d in ipairs(g:GetDescendants()) do
 		if d.Name == "ArenaGate" and d:GetAttribute("DoorOpen") == true then
@@ -2429,7 +2471,7 @@ local function dungeonCenter()
 end
 local function idleChests(g)
 	local out, wave = {}, g and g:FindFirstChild("Wave")
-	local cn = wave and wave:FindFirstChild("ChestNodes")
+	local cn = (wave and wave:FindFirstChild("ChestNodes")) or (g and g:FindFirstChild("ChestNodes")) -- SpiderTunnel: сундуки прямо в модели
 	for _, n in ipairs(cn and cn:GetChildren() or {}) do
 		-- открытый сундук теряет промпт, а ChestOpenState может остаться Idle — считаем только с живым промптом
 		local pr = n:IsA("BasePart") and n:FindFirstChildWhichIsA("ProximityPrompt", true)
@@ -2558,6 +2600,17 @@ local function dungeonRun()
 		dungeonIdle = os.clock()
 		return
 	end
+	-- мешок полон — лут не поднять: выходим продать и возвращаемся (погоня по запомненным воротам)
+	if bagFull() and not DF_dropExtraMed() then
+		local n = 0
+		for _, e in ipairs(invEntries()) do if sellable(e) then n += 1 end end
+		-- продавать нечего (мешок забит неприкосновенным) — выход ничего не даст
+		if n >= 3 or DF_coalCount() > CONFIG.CoalKeep then
+			DF_bagExit = true
+			exitDungeon("мешок полон — продаю и вернусь")
+			return
+		end
+	end
 	local wave = curGate and curGate:FindFirstChild("Wave")
 	if wave and wave:GetAttribute("WaveCompleted") ~= true then
 		if wave:GetAttribute("WaveActive") == true then
@@ -2593,13 +2646,13 @@ end
 
 -- Финальная стена слоя («босс»-стена): при ударе идёт волна врагов
 local wallReady = setmetatable({}, { __mode = "k" })
-local function finalWallAhead(dp)
+local function finalWallAhead(dp, maxDist)
 	local f = workspace:FindFirstChild("RockWalls")
 	if not f then return end
 	for _, w in ipairs(f:GetChildren()) do
 		local t = w:GetAttribute("Type")
 		if w:IsA("BasePart") and t and t:find("Final") and (w:GetAttribute("Health") or 0) > 0
-			and flat(w.Position, dp) <= CONFIG.WallStopDist then
+			and flat(w.Position, dp) <= (maxDist or CONFIG.WallStopDist) then
 			return w
 		end
 	end
@@ -3117,7 +3170,8 @@ local function autoStep()
 
 	if chestStep(dp, CONFIG.WorkRadius) then Phase = "Сундуки"; return end
 	if lootStep(dp, CONFIG.WorkRadius) then Phase = "Сбор лута"; return end
-	if fp < CONFIG.FuelTargetPct and #fuelTools() == 0 then
+	-- до финальной стены ≤ ~300 м (1 st ≈ 2.5 м) и топлива ≥ 40% — не отходим за топливом, доезжаем (у стены заправка трупами)
+	if fp < CONFIG.FuelTargetPct and #fuelTools() == 0 and not (fp >= 40 and finalWallAhead(dp, 130)) then
 		if lootStep(dp, CONFIG.FuelSearchRadius, true) then Phase = "Ищу топливо"; return end
 		-- уголь, только что выкопанный вдали от бура, лежит у нас под ногами
 		local me0 = hrp()
@@ -3276,7 +3330,7 @@ if getgenv then getgenv().DF_KnownGates = knownGates end
 local farmedAt, farmFails, farmTries = {}, {}, {}
 local function registerGates()
 	for _, g in ipairs(workspace:GetChildren()) do
-		if g:IsA("Model") and g.Name:sub(1, #CONFIG.GateName) == CONFIG.GateName then
+		if g:IsA("Model") and DF_isGate(g) then
 			local k, p = gateKey(g), pos(g)
 			if k and p and not knownGates[k] then knownGates[k] = { pos = p, name = g.Name } end
 		end
@@ -3314,7 +3368,15 @@ trackedDungeonRun = function()
 	if not inDungeon() and curGate then
 		local k = gateKey(curGate)
 		local wave = curGate:FindFirstChild("Wave")
-		if k then
+		if k and DF_bagExit then
+			-- вышли продать: не считаем это неудачным заходом, сразу продаём и возвращаемся
+			-- сразу продаём (иначе данж в приоритете — тут же заходим обратно с полным мешком), потом вернёмся погоней
+			DF_bagExit = nil
+			local d = getDrill()
+			local c = (d and pos(d)) or (hrp() and hrp().Position)
+			if c then pcall(sellStep, c, true) end
+			farmedAt[k], gateDone[k] = os.clock() + (bagFull() and 120 or 3), nil -- не продалось — не крутимся у входа
+		elseif k then
 			if (not wave or wave:GetAttribute("WaveCompleted") == true) and #idleChests(curGate) == 0 then
 				farmedAt[k] = math.huge
 				status("[Данжи] пройден: " .. curGate.Name)
@@ -3355,7 +3417,7 @@ local function farmGate(best, bk, r)
 	local g
 	for _ = 1, 20 do
 		for _, m in ipairs(workspace:GetChildren()) do
-			if m:IsA("Model") and m.Name:sub(1, #CONFIG.GateName) == CONFIG.GateName and gateKey(m) == bk then g = m end
+			if m:IsA("Model") and DF_isGate(m) and gateKey(m) == bk then g = m end
 		end
 		if g then break end
 		task.wait(0.25)
