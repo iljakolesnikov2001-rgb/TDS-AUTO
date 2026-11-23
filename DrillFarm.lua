@@ -2775,8 +2775,8 @@ end
 	-- бур не продвигается CONFIG.SaveGearStallMin минут — сохраняем лучшее (сразу, без алтаря)
 	AS.saveStep = function(dp)
 		if not CONFIG.SaveGearOnStall or State.NoDrive then return false end
-		-- бур едет или ломает финальную стену (её HP падает) — это прогресс
-		if not AS.stallX or math.abs(dp.X - AS.stallX) > 60 or os.clock() - AS.wallHitAt < 60 then AS.stallX, AS.stallAt = dp.X, os.clock(); return false end
+		-- бур едет, ломает стену (за 10 мин были удары) или стоит без топлива — не застрял, завершать забег нельзя
+		if not AS.stallX or math.abs(dp.X - AS.stallX) > 60 or os.clock() - AS.wallHitAt < 600 or fuelPct() < 5 then AS.stallX, AS.stallAt = dp.X, os.clock(); return false end
 		if os.clock() - AS.stallAt < CONFIG.SaveGearStallMin * 60 or os.clock() < (AS.saveNext or 0) then return false end
 		AS.saveNext = os.clock() + 120
 		Phase = "Бур не продвигается — сохраняю вещи"
