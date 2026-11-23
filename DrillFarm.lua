@@ -1063,7 +1063,8 @@ sellAll = function(sellPart)
 	for _ = 1, 60 do
 		local target
 		for _, e in ipairs(invEntries()) do
-			if sellable(e) and not failed[e.Id] then target = e; break end
+			-- трупы быстрый проход уже выкинул: оставшиеся — bounty (к Ozy), по одному их не гоняем
+			if sellable(e) and not failed[e.Id] and not ((DF_bountyHeld or 0) > 0 and e.Category == "Corpse") then target = e; break end
 		end
 		if not target then break end
 		local before = {}
