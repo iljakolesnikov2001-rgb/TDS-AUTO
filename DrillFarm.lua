@@ -3065,8 +3065,9 @@ local function autoStep()
 				pcall(sellStep, dp, true)
 				if shopStep(dp, true) or AS.bandageRun(dp, true) then return end
 			end
-			Phase = "Жду HP перед подземельем (в укрытии)"
-			hide("жду HP перед подземельем", function() return hpPct() < CONFIG.SafeHpPct end)
+			-- не ждём реген с остановленным буром: едем дальше, а к воротам вернёмся погоней (pickGate), когда HP восстановится
+			gateDone[key] = true
+			status(("[Dungeon] HP %d%% — не жду у %s, еду дальше, вернусь позже"):format(math.floor(hpPct()), g.Name))
 			return
 		end
 		Phase = "Вход в подземелье"; enterGate(g, key); return
