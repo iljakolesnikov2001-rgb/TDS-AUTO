@@ -995,12 +995,30 @@ grabSack = function(it)
 	return not it.Parent
 end
 
+-- встать сбоку от квадрата продажи лицом к нему: брошенное падает перед персонажем — то есть в квадрат
+-- (стоя в центре, вещи падают за край). Сторону берём ту, где под ногами есть пол.
+function DF_sellStand(spot)
+	local r, p = hrp(), pos(spot)
+	if not (r and p) then return end
+	local cf = spot:IsA("BasePart") and spot.CFrame or CFrame.new(p)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { player.Character }
+	local best = p + Vector3.new(0, 4, 0)
+	for _, dir in ipairs({ -cf.RightVector, cf.RightVector, cf.LookVector, -cf.LookVector }) do
+		local c = p + dir * 4
+		local hit = workspace:Raycast(c + Vector3.new(0, 5, 0), Vector3.new(0, -10, 0), params)
+		if hit and math.abs(hit.Position.Y - p.Y) < 2 then best = hit.Position + Vector3.new(0, 3, 0); break end
+	end
+	r.AssemblyLinearVelocity = Vector3.zero
+	r.CFrame = CFrame.lookAt(best, Vector3.new(p.X, best.Y, p.Z))
+end
 sellAll = function(sellPart)
 	local folder = workspace:FindFirstChild("Items")
 	if not folder then return end
 	local spot = sellPart.Parent and sellPart.Parent.Parent
 		and sellPart.Parent.Parent:FindFirstChild("SellSpot", true) or sellPart
-	tp(spot, Vector3.new(0, 4, 0))
+	DF_sellStand(spot)
 	task.wait(0.3)
 	local mine, failed = {}, {}
 	-- быстрый проход: всё продаваемое подряд через DropGroup(id) (~0.1 с на предмет), без опроса инвентаря
@@ -1012,7 +1030,7 @@ sellAll = function(sellPart)
 		for _, e in ipairs(invEntries()) do if sellable(e) and DF_value(e.Name, e.Category, 1) > 0 then table.insert(list, e) end end -- bounty-трупы стол не берёт
 		for i, e in ipairs(list) do
 			local r = hrp()
-			if r and (r.Position - pos(spot)).Magnitude > 8 then tp(spot, Vector3.new(0, 4, 0)) end
+			if r and (r.Position - pos(spot)).Magnitude > 8 then DF_sellStand(spot) end
 			pcall(function() dropRf:InvokeServer(e.Id) end)
 			if i % 5 == 0 then task.wait(0.05) end
 		end
@@ -1060,7 +1078,7 @@ sellAll = function(sellPart)
 			failed[target.Id] = true
 			status("[Sell] не удалось выкинуть: " .. tostring(target.DisplayName or target.Name))
 		end
-		tp(spot, Vector3.new(0, 4, 0))
+		DF_sellStand(spot)
 	end
 	pcall(sellExtraPickaxes, mine)
 	pcall(sellOldGear, mine)
