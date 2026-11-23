@@ -8,8 +8,8 @@ local CONFIG = {
 	WorkRadius       = 300,  -- сундуки/лут/монстры ищем в этом радиусе от бура (дальше игра телепортирует к буру)
 	GateStopDist     = 300,  -- заходим в подземелья с воротами ближе этого к буру (по горизонтали: ворота стоят сбоку)
 	WallStopDist     = 110,  -- перед финальной стеной (при ударе идёт волна врагов) ждём полное HP
-	GuardHpPct       = 55,   -- HP ниже — прячемся под землю
-	SafeHpPct        = 70,   -- выходим из укрытия, когда HP восстановилось
+	GuardHpPct       = 40,   -- HP ниже — прячемся под землю
+	SafeHpPct        = 60,   -- выходим из укрытия, когда HP восстановилось
 	FuelTargetPct    = 50,   -- заправляем, когда топлива меньше (если в рюкзаке есть канистра)
 	FuelSearchRadius = 500,  -- топливо почти кончилось, канистр нет — ищем дальше
 	DriveMinFuel     = 3,
@@ -29,11 +29,11 @@ local CONFIG = {
 	IgnoredItems     = { "Rock", "DeathChest" },
 	-- порядок покупки апгрейдов бура (сначала урон по стенам). Карточки за Robux не покупаются никогда.
 	-- порядок покупки апгрейдов бура (тир-лист): сначала строго по списку,
-	UpgradePriority  = { "RPMOverclock", "PowerBurst", "UltraDrill", "MoneyDrill", "MegaDrill", "DrillPower", "PowerSlam" },
+	UpgradePriority  = { "RPMOverclock", "DrillPower", "PowerBurst", "HealthRegen", "UltraDrill", "MoneyDrill", "MegaDrill", "PowerSlam" },
 	-- затем из этой группы — тот, у которого уровень на буре сейчас меньше всех; остальные — в последнюю очередь
 	UpgradeBalanced  = { "TeamHealth", "DrillDefense", "EngineOverdrive", "HealthRegen", "SackStorage",
-		"TeamPickaxeDamage", "TeamMeleeDamage", "PowerDrive", "DriveSpeed" },
-	UpgradeNever     = { "CartExtension" }, -- никогда не покупать (вагоны замедляют бур)
+		"TeamPickaxeDamage", "TeamMeleeDamage", "DriveSpeed" },
+	UpgradeNever     = { "CartExtension", "PowerDrive" }, -- никогда не покупать (вагоны замедляют бур)
 
 	-- Фарм руды (отдельный тумблер)
 	OreNames         = {},   -- типы руды (SessionOreType: "Coal", "Iron"...); пусто = любая
@@ -1419,7 +1419,7 @@ function DF_killClose(m)
 			if misses > #killCands * 2 or (misses >= 2 and hpPct() < myHp0 - 5 and other and other ~= m) then nodmg = true; break end
 		end
 		if CONFIG.KillTimeout > 0 and os.clock() - t0 > CONFIG.KillTimeout then break end
-		if hpPct() < CONFIG.GuardHpPct then break end -- мало HP: бросаем бой, дальше сработает укрытие
+		if hpPct() < (m:GetAttribute("FuelLeechState") and 25 or CONFIG.GuardHpPct) then break end -- мало HP: бросаем бой, дальше сработает укрытие
 		RunService.Heartbeat:Wait()
 	end
 	Moving = false
@@ -1630,7 +1630,7 @@ end
 -- Есть ли смысл сидеть в укрытии: мобы у бура/рядом, яд, или HP совсем мало. Иначе HP восстанавливается
 -- и за рулём — простаивать минутами незачем.
 local function dangerNear()
-	if hpPct() < 30 or poisoned() then return true end
+	if hpPct() < 30 then return true end
 	local d = getDrill()
 	local c = d and pos(d)
 	return (c and #enemies(70, c) > 0) or #enemies(40) > 0
@@ -1648,8 +1648,9 @@ local function hide(why, keep)
 	pcall(function()
 		if not spot then return end
 		local t0, lastHp, lastCheck = os.clock(), hpPct(), os.clock()
-		while Running and (busy() or State.KillAura) and alive() and ((hpPct() < CONFIG.SafeHpPct and dangerNear()) or (keep and keep())) and os.clock() - t0 < 240
-			and not (hpPct() >= 35 and leechOnDrill()) do -- пиявка сосёт топливо — выходим её бить
+		while Running and (busy() or State.KillAura) and alive() and ((hpPct() < CONFIG.SafeHpPct and dangerNear()) or (keep and keep())) and os.clock() - t0 < 90
+			and not (hpPct() >= 35 and leechOnDrill()) -- пиявка сосёт топливо — выходим её бить
+			and not (fuelPct() < 5 and #fuelTools() > 0 and #enemies(15, pos(getDrill()) or r.Position) == 0) do -- пустой бак: заправить
 			r = hrp()
 			if not r then break end
 			r.Anchored = false -- Anchored не реплицируется: для сервера мы оставались там, где нас били
@@ -2583,7 +2584,7 @@ AS.bandageRun = function(dp, force)
 		local ok, p = pcall(function() return shop:GetPivot().Position end)
 		if ok then
 			-- крепость у бура: её кассу shopStep и так проверяет каждые 10 с
-			if flat(p, dp) <= 400 then AS.shopAt[m.Name] = os.clock() end
+			if flat(p, dp) <= CONFIG.WorkRadius then AS.shopAt[m.Name] = os.clock() end
 			table.insert(forts, { name = m.Name, pos = p })
 		end
 	end
@@ -2874,6 +2875,12 @@ local function autoStep()
 		return
 	end
 
+	-- пустой бак — бур стоит, и мобы копятся: заправить сразу (пара секунд), если у самого бура чисто
+	if fuelPct() < 5 and #fuelTools() > 0 and hpPct() >= 30 and #enemies(15, dp) == 0 then
+		Phase = "Срочная заправка"
+		refuel()
+		return
+	end
 	-- монстры у бура: пока они рядом, они бьют и водителя (и того, кто заправляет) — сначала разбираемся с ними
 	local near = enemies(45, dp)
 	-- уезжаем от толпы или когда HP мало; 1–3 моба при хорошем HP быстрее убить (они всё равно догоняют)
@@ -2943,6 +2950,12 @@ local function autoStep()
 		-- ждать HP на месте нельзя — бьют; лечимся аптечкой, иначе ждём в укрытии
 		if hpPct() < CONFIG.SafeHpPct then
 			if heal(CONFIG.SafeHpPct) then return end
+			-- аптечек нет: продать лут и слетать за аптечками быстрее, чем ждать реген минутами
+			if #medkits() == 0 and os.clock() > (AS.gateShopNext or 0) then
+				AS.gateShopNext = os.clock() + 45
+				pcall(sellStep, dp, true)
+				if shopStep(dp, true) or AS.bandageRun(dp, true) then return end
+			end
 			Phase = "Жду HP перед подземельем (в укрытии)"
 			hide("жду HP перед подземельем", function() return hpPct() < CONFIG.SafeHpPct end)
 			return
@@ -3905,6 +3918,28 @@ task.spawn(function()
 			if (autoBtn.Text:find("ОСТАНОВИТЬ", 1, true) ~= nil) ~= State.Auto then renderAuto() end
 		end)
 		task.wait(0.5)
+	end
+end)
+
+-- Профиль: куда уходит время (раз в 5 минут — топ фаз в лог), чтобы искать простои
+task.spawn(function()
+	local acc, t0 = {}, os.clock()
+	while Running do
+		task.wait(0.5)
+		if busy() then
+			local k = tostring(Phase):gsub("%d+", "#"):gsub("%s*%b()", "")
+			acc[k] = (acc[k] or 0) + 0.5
+		end
+		if os.clock() - t0 >= 300 then
+			local l = {}
+			for k, v in pairs(acc) do table.insert(l, { k, v }) end
+			table.sort(l, function(x, y) return x[2] > y[2] end)
+			local out = {}
+			for i = 1, math.min(8, #l) do table.insert(out, ("%s %.0fс"):format(l[i][1], l[i][2])) end
+			local d = getDrill()
+			status(("[Prof] 5 мин, X=%s: %s"):format(d and tostring(math.floor(pos(d).X)) or "?", table.concat(out, " | ")))
+			acc, t0 = {}, os.clock()
+		end
 	end
 end)
 
