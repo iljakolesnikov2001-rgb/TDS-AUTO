@@ -56,6 +56,7 @@ local CONFIG = {
 	HighlightColor   = Color3.fromRGB(255, 60, 60),
 	SellKeepRarity   = { "Legendary", "Mythic", "Exotic", "Secret", "Divine" }, -- не продавать
 	SellKeepCategory = { "Fuel", "Consumable" },  -- топливо не продаём
+	BagCapTarget     = 50,   -- SackStorage покупаем первым, пока вместимость мешка меньше
 	CoalKeep         = 5,    -- угля в мешке держим столько, лишний продаём
 	MoveSpeed        = 540,  -- студов/сек при перелёте
 	PickupDelay      = 0.05,
@@ -114,10 +115,13 @@ if DF_BRIDGE and isfile and readfile and delfile and loadstring then
 		while Running do
 			if isfile("DF_cmd.lua") then
 				local src = readfile("DF_cmd.lua"); delfile("DF_cmd.lua")
-				local f, err = loadstring(src)
-				local ok, res = false, err
-				if f then ok, res = pcall(f) end
-				status("[CMD] " .. (ok and "ok: " or "ошибка: ") .. tostring(res))
+				-- в отдельном потоке: зависшая проба не должна навсегда блокировать мост
+				task.spawn(function()
+					local f, err = loadstring(src)
+					local ok, res = false, err
+					if f then ok, res = pcall(f) end
+					status("[CMD] " .. (ok and "ok: " or "ошибка: ") .. tostring(res))
+				end)
 			end
 			task.wait(0.5)
 		end
@@ -1034,6 +1038,7 @@ sellAll = function(sellPart)
 			pcall(function() dropRf:InvokeServer(e.Id) end)
 			if i % 5 == 0 then task.wait(0.05) end
 		end
+		local med = DF_dropExtraMed() -- лишние бинты/аптечки (бинты при полном запасе аптечек) — тоже на продажу
 		local coal = DF_dropExtraCoal()
 		if coal > 0 then status(("[Sell] лишний уголь на продажу: %d (оставил %d)"):format(coal, CONFIG.CoalKeep)) end
 		task.wait(0.4)
@@ -1041,7 +1046,8 @@ sellAll = function(sellPart)
 			if not before[it] and not it:HasTag("ShopItem") then -- товар прилавка прогрузился — не наше
 				local rar, cat = it:GetAttribute("Rarity") or "", it:GetAttribute("Category") or ""
 				if DF_keepItem(rar, cat)
-					and not (coal > 0 and it:GetAttribute("ItemDatabaseId") == "Ore_Coal") then
+					and not (coal > 0 and it:GetAttribute("ItemDatabaseId") == "Ore_Coal")
+					and not (med and it:GetAttribute("Class") == "Medkit") then
 					pickupItem(it); status("[Sell] выпало не то, вернул: " .. it.Name)
 				else
 					mine[it] = true
@@ -1340,6 +1346,11 @@ local function upgradeStep(force)
 		if type(o) == "table" and o.Type == "Coins" and type(o.Cost) == "number" and o.Cost > 0 and o.Cost <= coins
 			and not table.find(CONFIG.UpgradeNever, o.UpgradeName) then
 			local rank = table.find(CONFIG.UpgradePriority, o.UpgradeName)
+			-- вместимость мешка — первой, пока меньше BagCapTarget (полный мешок = пропущенный лут)
+			if o.UpgradeName == "SackStorage" then
+				local _, cap = bagUsage()
+				if cap and cap < CONFIG.BagCapTarget then rank = 0 end
+			end
 			if not rank and table.find(CONFIG.UpgradeBalanced, o.UpgradeName) then
 				local d = getDrill()
 				rank = #CONFIG.UpgradePriority + 1 + (d and tonumber(d:GetAttribute(o.UpgradeName)) or 0) / 1000
@@ -1349,8 +1360,14 @@ local function upgradeStep(force)
 		end
 	end
 	if not best then return false end
+	local _, cap0 = bagUsage(true)
 	local res = call("DrillService", "UpgradeDrill", best.UpgradeName, ver)
 	status(("[Upgrade] %s (%s) за %d: %s"):format(tostring(best.UpgradeName), tostring(best.Rarity), best.Cost, res and "куплено" or "отказ"))
+	if res and best.UpgradeName == "SackStorage" then
+		task.wait(0.5)
+		local _, cap1 = bagUsage(true)
+		status(("[Upgrade] вместимость мешка: %s → %s"):format(tostring(cap0), tostring(cap1)))
+	end
 	if res then Stats.upgrades += 1; upgradeNext = os.clock() + 1 end
 	return res and true or false
 end
@@ -1671,6 +1688,27 @@ function DF_medCount(band)
 	return n
 end
 -- мешок забит аптечками сверх запаса (они тоже занимают место) — выкинуть по одной, чтобы поднять топливо
+-- бросить n штук инструмента name (стопкой): Drop бросает то, что в руке, а EquipTool — переключатель,
+-- поэтому перед каждым броском проверяем, что в руке именно он. Возвращает, сколько бросили.
+function DF_dropTool(name, n)
+	local eq, drop, un = knit("ToolService", "EquipTool"), knit("ToolService", "Drop"), knit("ToolService", "UnequipTool")
+	if not (eq and drop) then return 0 end
+	local done = 0
+	for _ = 1, n do
+		local held = player.Character and player.Character:FindFirstChildOfClass("Tool")
+		if not held or held.Name ~= name then
+			local t = player.Backpack:FindFirstChild(name)
+			if not t then break end
+			if held and un then pcall(function() un:InvokeServer() end); task.wait(0.2) end
+			pcall(function() eq:InvokeServer(t) end)
+			for _ = 1, 10 do task.wait(0.05); held = player.Character and player.Character:FindFirstChildOfClass("Tool"); if held and held.Name == name then break end end
+			if not held or held.Name ~= name then break end
+		end
+		if pcall(function() drop:InvokeServer() end) then done += 1 end
+		task.wait(0.2)
+	end
+	return done
+end
 -- уголь стопкой (MedicalStackCount) занимает слот мешка за каждую штуку: держим CoalKeep, остальное — на стол продажи
 function DF_coalCount()
 	local n = 0
@@ -1678,46 +1716,26 @@ function DF_coalCount()
 	return n
 end
 function DF_dropExtraCoal()
-	local eq, drop = knit("ToolService", "EquipTool"), knit("ToolService", "Drop")
 	local extra = DF_coalCount() - CONFIG.CoalKeep
-	if not (eq and drop) or extra <= 0 then return 0 end
-	local done = 0
-	for _, t in ipairs(fuelTools()) do
-		if t.Name == "Ore_Coal" then
-			for _ = 1, extra do
-				-- Drop бросает то, что в руке: только если в руке точно уголь (иначе летит пропан/бинты)
-				local held = player.Character and player.Character:FindFirstChildOfClass("Tool")
-				if not held or held.Name ~= "Ore_Coal" then
-					local c = player.Backpack:FindFirstChild("Ore_Coal")
-					if not c then break end
-					if held then local un = knit("ToolService", "UnequipTool"); if un then pcall(function() un:InvokeServer() end); task.wait(0.2) end end
-					pcall(function() eq:InvokeServer(c) end)
-					for _ = 1, 10 do task.wait(0.05); held = player.Character and player.Character:FindFirstChildOfClass("Tool"); if held and held.Name == "Ore_Coal" then break end end
-					if not held or held.Name ~= "Ore_Coal" then break end
-				end
-				if pcall(function() drop:InvokeServer() end) then done += 1 end
-				task.wait(0.2)
-			end
-			break
-		end
-	end
-	return done
+	return extra > 0 and DF_dropTool("Ore_Coal", extra) or 0
+end
+-- бинты (слабые) нужны, только пока аптечек меньше нормы; с полным запасом аптечек — 0
+function DF_bandStock()
+	return DF_medCount(false) >= CONFIG.MedkitStock and 0 or CONFIG.BandageStock
 end
 function DF_dropExtraMed()
 	local eq, drop = knit("ToolService", "EquipTool"), knit("ToolService", "Drop")
 	if not (eq and drop) then return false end
 	for _, band in ipairs({ true, false }) do
-		local extra = DF_medCount(band) - (band and CONFIG.BandageStock or CONFIG.MedkitStock)
+		local extra = DF_medCount(band) - (band and DF_bandStock() or CONFIG.MedkitStock)
 		if extra > 0 then
 			for _, t in ipairs(medkits()) do
 				if (t.Name:find("Bandage") ~= nil) == band then
-					local n = math.min(extra, 5)
-					for _ = 1, n do
-						pcall(function() eq:InvokeServer(t) end); task.wait(0.3)
-						pcall(function() drop:InvokeServer() end); task.wait(0.3)
+					local n = DF_dropTool(t.Name, math.min(extra, 6))
+					if n > 0 then
+						status(("[Bag] выкинул лишних %s: %d"):format(t.Name, n))
+						return true
 					end
-					status(("[Bag] мешок полон — выкинул лишних %s: %d"):format(t.Name, n))
-					return true
 				end
 			end
 		end
@@ -1944,7 +1962,7 @@ local function lootOne(center, radius, fuelOnly)
 			elseif it:GetAttribute("Class") == "Medkit" then
 				-- аптечки/бинты с земли — только до нормы (иначе выкинутые лишние тут же подбираем обратно)
 				local band = name:find("Bandage") ~= nil
-				want = not fuelOnly and not full and DF_medCount(band) < (band and CONFIG.BandageStock or CONFIG.MedkitStock)
+				want = not fuelOnly and not full and DF_medCount(band) < (band and DF_bandStock() or CONFIG.MedkitStock)
 			elseif fuelOnly then want = isFuel and not full and not fuelStocked
 			else want = room(it) and ((isFuel and not fuelStocked) or ((it:GetAttribute("Value") or 0) >= CONFIG.ItemsMinValue
 				and not hasKey(name, CONFIG.IgnoredItems)))
@@ -2179,7 +2197,7 @@ gearGain = function(it)
 		-- запас аптечек: до MedkitStock штук, выгоднее — больше HP за монету
 		local band = it.Name:find("Bandage") ~= nil
 		if band then
-			if DF_medCount(true) >= CONFIG.BandageStock then return nil end
+			if DF_medCount(true) >= DF_bandStock() then return nil end
 		elseif DF_medCount(false) >= CONFIG.MedkitStock then return nil end
 		-- дорогие аптечки (Golden за 1000) — только если монет много: апгрейды бура важнее
 		if (it:GetAttribute("Cost") or 0) > math.max(100, shopCoins * 0.15) then return nil end
@@ -2649,6 +2667,18 @@ local function dungeonRun()
 	if hpPct() < 60 and #enemies(60) > 0 then exitDungeon("мало HP"); return end
 	local r = hrp()
 	if not r then return end
+	-- игра/огненный страж/смерть выкинули наружу: иначе бьём мобов у бура в режиме «данж» бесконечно
+	-- (волна идёт у самих ворот, снаружи — рядом с воротами это ещё данж)
+	local function away(p) return not inZone(p) and not (curGate and curGate.Parent and flat(curGate:GetPivot().Position, p) < 300) end
+	if away(r.Position) then
+		task.wait(1)
+		r = hrp()
+		if r and away(r.Position) then
+			status("[Dungeon] уже снаружи — выхожу из режима данжа")
+			dungeonActive, curGate = false, nil; table.clear(killSkip)
+			return
+		end
+	end
 	local ac, arena = dungeonCenter()
 	-- мобы: по всему данжу (вокруг арены 450 st) и рядом с нами
 	local list = enemies(CONFIG.DungeonRadius)
@@ -2815,7 +2845,7 @@ AS.bandageRun = function(dp, force)
 	AS.bandNext = os.clock() + 20
 	local n = 0
 	n = DF_medCount(true)
-	if n >= CONFIG.BandageStock or (coinsCache2() or 0) < 10 then return false end
+	if n >= DF_bandStock() or (coinsCache2() or 0) < 10 then return false end
 	local best, bd
 	for _, fo in ipairs(forts) do
 		local d = flat(fo.pos, dp)
