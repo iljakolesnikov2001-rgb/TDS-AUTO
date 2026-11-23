@@ -776,7 +776,7 @@ end
 local function invEntries()
 	local rf = knit("CarryInventoryService", "GetInventory")
 	if not rf then return {} end
-	local ok, inv = pcall(function() return rf:InvokeServer() end)
+	local ok, inv = DF_timed(8, "GetInventory", function() return rf:InvokeServer() end)
 	if not ok or type(inv) ~= "table" or type(inv.Entries) ~= "table" then return {} end
 	local list = {}
 	for _, e in pairs(inv.Entries) do
@@ -1175,14 +1175,23 @@ end
 
 
 -- Вызов Knit-сервиса так же, как это делает игра (методы возвращают Promise). nil — ошибка.
+-- запрос к серверу с таймаутом: InvokeServer/Promise:expect() без ответа висят вечно, и вместе с ними
+-- весь цикл (23.11: 220 с без действий в данже под ядом → смерть)
+function DF_timed(sec, label, fn, ...)
+	local args, done, res = table.pack(...), false, nil
+	task.spawn(function() res = table.pack(pcall(fn, table.unpack(args, 1, args.n))); done = true end)
+	local t0 = os.clock()
+	while not done and os.clock() - t0 < sec do task.wait(0.03) end
+	if not done then status("[Сеть] сервер не ответил за " .. sec .. " с: " .. label); return false end
+	return table.unpack(res, 1, res.n)
+end
 local function call(service, method, ...)
-	local args = table.pack(...)
-	local ok, a, b = pcall(function()
+	local ok, a, b = DF_timed(8, service .. "." .. method, function(...)
 		local s = Knit.GetService(service)
-		local p = s[method](s, table.unpack(args, 1, args.n))
+		local p = s[method](s, ...)
 		if type(p) == "table" and p.expect then return p:expect() end
 		return p
-	end)
+	end, ...)
 	if not ok then return nil end
 	return a, b
 end
