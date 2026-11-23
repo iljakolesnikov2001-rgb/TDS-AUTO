@@ -14,6 +14,9 @@ local CONFIG = {
 	FuelSearchRadius = 500,  -- топливо почти кончилось, канистр нет — ищем дальше
 	DriveMinFuel     = 3,
 	MedkitStock      = 6,     -- держать аптечек в запасе (покупаются в магазине крепости)
+	BandageStock     = 20,    -- бинтов (дешёвые, 10 монет) держать до стольких, сверх MedkitStock
+	ShopRestock      = 300,   -- каждый магазин обновляет товар раз в 5 минут
+	BandageRunDist   = 2500,  -- за бинтами в запомненный магазин летаем не дальше этого от бура
 	SellFarPct       = 85,   -- сумка заполнена на N% — продаём даже на дальнем столе
 	SaveGearOnStall  = true, -- бур не продвигается N минут — уносим лучшее через алтарь Save Gear (бесплатно, конец захода)
 	SaveGearStallMin = 8,
@@ -64,6 +67,20 @@ local player   = Players.LocalPlayer
 local Running = true
 local Selling = false -- пока идёт продажа, остальные функции ждут
 local Connections = {}
+-- новая загрузка скрипта гасит старую копию, даже если та упала с ошибкой и не дошла до shutdown
+do
+	local token = {}
+	if getgenv then getgenv().DF_Token = token end
+	task.spawn(function()
+		while Running do
+			task.wait(1)
+			if getgenv and getgenv().DF_Token ~= token then
+				Running = false
+				for _, c in ipairs(Connections) do pcall(function() c:Disconnect() end) end
+			end
+		end
+	end)
+end
 local State = { Auto=false, NoDrive=false, DungeonFarm=false, Farm=false, KillAura=false, Noclip=false, Highlight=false, SkipCutscenes=true }
 -- работает ли «мозг» (авто-фарм или фарм данжей) — по этому флагу продолжаются бой, укрытие, сбор
 local function busy() return State.Auto or State.DungeonFarm end
@@ -1364,7 +1381,8 @@ local function standUnder(m)
 	return mid + killCands[killIdx](size / 2), base, mid
 end
 
-local function killOne(m)
+-- вплотную (глобал: лимит локалов); обычный killOne ниже бьёт с дальности оружия
+function DF_killClose(m)
 	-- у Fuel Leech нет Humanoid — здоровье в атрибуте FuelLeechHealth (см. mhp ниже)
 	local h = m:FindFirstChild("Humanoid") or (m:GetAttribute("FuelLeechState") and { Health = 1 })
 	local tool = weaponFor(m)
@@ -1423,7 +1441,7 @@ local function hordeKill(m, center)
 	local t0, hp, last = os.clock(), h.Health, os.clock()
 	local fallback = false
 	Moving = true
-	while Running and busy() and m.Parent and h.Health > 0 and os.clock() - t0 < 15 and hpPct() >= CONFIG.GuardHpPct do
+	while Running and (State.KillAura or busy()) and m.Parent and h.Health > 0 and os.clock() - t0 < 15 and hpPct() >= CONFIG.GuardHpPct do
 		local r, p = hrp(), pos(m)
 		if not (r and p) then break end
 		local away = Vector3.new(p.X - center.X, 0, p.Z - center.Z)
@@ -1440,10 +1458,17 @@ local function hordeKill(m, center)
 		RunService.Heartbeat:Wait()
 	end
 	Moving = false
-	if fallback and m.Parent and h.Health > 0 and hpPct() >= CONFIG.GuardHpPct then return killOne(m) end
+	if fallback and m.Parent and h.Health > 0 and hpPct() >= CONFIG.GuardHpPct then return DF_killClose(m) end
 	local dead = not m.Parent or h.Health <= 0
 	if dead then Stats.kills += 1 else killSkip[m] = os.clock() + 10 end
 	status(("[Horde] %s: %s за %.1fс (дистанция %d)"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0, range))
+end
+
+-- Одиночная цель: с максимальной дальности оружия, со стороны игрока; не бьётся — hordeKill сам подойдёт вплотную
+local function killOne(m)
+	local r, p = hrp(), pos(m)
+	if not (r and p) or not m:FindFirstChildOfClass("Humanoid") or m:GetAttribute("FuelLeechState") then return DF_killClose(m) end
+	return hordeKill(m, p * 2 - r.Position)
 end
 
 -- true — были монстры (шаг занят), false — убивать некого
@@ -1974,7 +1999,12 @@ gearGain = function(it)
 		return dmg > have and (dmg - have) / math.max(have, 1) * 0.5 or nil -- кирка важнее меча только для угля
 	elseif it:GetAttribute("Class") == "Medkit" then
 		-- запас аптечек: до MedkitStock штук, выгоднее — больше HP за монету
-		if #medkits() >= CONFIG.MedkitStock then return nil end
+		local band = it.Name:find("Bandage") ~= nil
+		if band then
+			local n = 0
+			for _, t in ipairs(medkits()) do if t.Name:find("Bandage") then n += 1 end end
+			if n >= CONFIG.BandageStock then return nil end
+		elseif #medkits() >= CONFIG.MedkitStock then return nil end
 		-- дорогие аптечки (Golden за 1000) — только если монет много: апгрейды бура важнее
 		if (it:GetAttribute("Cost") or 0) > math.max(100, shopCoins * 0.15) then return nil end
 		return (it:GetAttribute("Health") or 0.1) * 100 / math.max(it:GetAttribute("Cost") or 1, 1) * 0.05
@@ -2461,7 +2491,7 @@ local function dungeonRun()
 			task.wait(0.5)
 			return
 		end
-		status("[Dungeon] волна не стартовала за 30 с — иду к сундукам")
+		if waveWaitAt ~= math.huge then status("[Dungeon] волна не стартовала за 30 с — иду к сундукам") end
 		waveWaitAt = math.huge
 	end
 	-- сундуки волны (за ареной)
@@ -2536,6 +2566,35 @@ end
 local function coinsCache2()
 	if os.clock() - AS.coinsAt2 > 5 then AS.coinsAt2 = os.clock(); local c = call("CurrencyService", "GetCurrency"); if type(c) == "number" then AS.coinsVal2 = c end end
 	return AS.coinsVal2
+end
+-- Бинты по всем магазинам: запоминаем каждую кассу (BuyPart), мимо которой проехали, и когда там были;
+-- товар обновляется раз в ShopRestock — тогда, если бинтов мало, летим туда снова.
+AS.shops = getgenv and (getgenv().DF_Shops or {}) or {}
+if getgenv then getgenv().DF_Shops = AS.shops end
+AS.bandNext = 0
+AS.bandageRun = function(dp)
+	for _, b in ipairs(CS:GetTagged("BuyPart")) do
+		if b:IsA("BasePart") and not b:GetFullName():find("CutScene", 1, true) then
+			local k = math.floor(b.Position.X / 50) .. ":" .. math.floor(b.Position.Z / 50)
+			AS.shops[k] = AS.shops[k] or { pos = b.Position, at = 0 }
+			-- касса рядом с буром: shopStep и так проверяет её каждые 10 с
+			if flat(b.Position, dp) <= CONFIG.WorkRadius then AS.shops[k].at = os.clock() end
+		end
+	end
+	if os.clock() < AS.bandNext then return false end
+	AS.bandNext = os.clock() + 20
+	local n = 0
+	for _, t in ipairs(medkits()) do if t.Name:find("Bandage") then n += 1 end end
+	if n >= CONFIG.BandageStock or (coinsCache2() or 0) < 30 then return false end
+	local best, bd
+	for _, s in pairs(AS.shops) do
+		local d = flat(s.pos, dp)
+		if os.clock() - s.at > CONFIG.ShopRestock and d <= CONFIG.BandageRunDist and (not bd or d < bd) then best, bd = s, d end
+	end
+	if not best then return false end
+	best.at = os.clock()
+	status(("[Shop] за бинтами в магазин (%d st, бинтов %d)"):format(bd, n))
+	return farShop(best.pos)
 end
 local trackedDungeonRun, noDriveIdle -- ниже (раздел DUNGEON FARM)
 AS.wallSeen = setmetatable({}, { __mode = "k" })
@@ -2884,6 +2943,7 @@ local function autoStep()
 		if sellStep(dp, true) then return end
 	end
 	if shopStep(dp) then return end
+	if AS.bandageRun(dp) then return end
 	-- раз в 5 минут, если монет много: дальний магазин за снаряжением/аптечками получше
 	if os.clock() > AS.farShopNext and (coinsCache2() or 0) >= 500 then
 		AS.farShopNext = os.clock() + 300
