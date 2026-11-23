@@ -2664,7 +2664,7 @@ AS.bandageRun = function(dp, force)
 	for _, fo in ipairs(forts) do
 		local d = flat(fo.pos, dp)
 		-- только пройденные крепости (впереди бура — сплошной камень)
-		if fo.pos.X <= dp.X + 50 and d <= CONFIG.BandageRunDist and os.clock() - (AS.shopAt[fo.name] or -1e9) > CONFIG.ShopRestock
+		if fo.pos.X <= dp.X + 50 and d <= ((force or n < 5) and CONFIG.BandageRunDist or 1500) and os.clock() - (AS.shopAt[fo.name] or -1e9) > CONFIG.ShopRestock
 			and (not bd or d < bd) then best, bd = fo, d end
 	end
 	if not best then return false end
