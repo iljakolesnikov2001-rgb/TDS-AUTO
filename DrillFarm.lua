@@ -2625,11 +2625,15 @@ pitStep = function(dp, radius)
 	-- встать ногами (сервер считает игроков на площадке) и ждать отсчёт → телепорт
 	r = hrp()
 	if r then r.AssemblyLinearVelocity = Vector3.zero; r.CFrame = spot.CFrame + Vector3.new(0, 4, 0) end
-	local from, t0 = r and r.Position, os.clock()
-	while Running and busy() and os.clock() - t0 < 30 do
+	local from, t0, counted = r and r.Position, os.clock(), false
+	local hid = pit:GetAttribute("DungeonLootHighlightRootId")
+	while Running and busy() and os.clock() - t0 < 40 do
 		local c = hrp()
 		if not c then break end
-		if player:GetAttribute("InDungeon") == true or (from and (c.Position - from).Magnitude > 150) then
+		-- InDungeon у игрока залипает true после прошлого данжа — не верим ему; вход = игра подсветила
+		-- лут этой ямы или нас унесло телепортом после отсчёта (15 с на площадке)
+		if (hid and player:GetAttribute("ActiveDungeonLootHighlightRootId") == hid and counted)
+			or (counted and from and (c.Position - from).Magnitude > 150) then
 			dungeonActive, curPit, curGate = true, pit, nil
 			dungeonStart, dungeonIdle = os.clock(), os.clock()
 			table.clear(killSkip)
@@ -2638,11 +2642,15 @@ pitStep = function(dp, radius)
 			return true
 		end
 		local st = spot:GetAttribute("QueueState")
+		if st == "Countdown" then counted = true end
 		Phase = st == "Countdown" and ("Паучья яма: отсчёт %d с"):format(math.max(0, math.ceil((spot:GetAttribute("CountdownEndsAt") or 0) - workspace:GetServerTimeNow())))
 			or "Паучья яма: жду очередь"
 		-- 8 с без отсчёта — яма ещё закрыта (бур не доехал / кто-то внутри)
-		if os.clock() - t0 > 8 and st ~= "Countdown" then break end
-		if (c.Position - spot.Position).Magnitude > 25 then c.CFrame = spot.CFrame + Vector3.new(0, 4, 0) end
+		if os.clock() - t0 > 8 and not counted then break end
+		-- стоим на площадке весь отсчёт: сошли — таймер сбрасывается
+		if not counted or st == "Countdown" then
+			if (c.Position - spot.Position).Magnitude > 6 then c.AssemblyLinearVelocity = Vector3.zero; c.CFrame = spot.CFrame + Vector3.new(0, 4, 0) end
+		end
 		task.wait(0.25)
 	end
 	status(("[Pit] не пустили (очередь: %s, игроков %s)"):format(tostring(spot:GetAttribute("QueueState")), tostring(spot:GetAttribute("PlayerCount"))))
