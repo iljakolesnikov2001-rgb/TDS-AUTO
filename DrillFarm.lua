@@ -3073,7 +3073,7 @@ end
 		local hh = hum()
 		-- мёртвым SaveGear платный (Robux) — никогда
 		if not hh or hh.Health <= 0 then status("[Save] персонаж мёртв — сохранение пропущено"); return false end
-		driveStop()
+		if not direct then driveStop() end -- direct = аварийный/быстрый сейв: ни одного лишнего запроса до SaveGear
 		local r = hrp()
 		if not r then return false end
 		local function hold(p, secs)
@@ -3703,15 +3703,19 @@ task.spawn(function()
 		local h = hum()
 		if not fired and State.Auto and CONFIG.EmergencyHpPct > 0 and h and h.Health > 0 and hpPct() <= CONFIG.EmergencyHpPct then
 			fired = true
-			for k in pairs(State) do if k ~= "SkipCutscenes" then State[k] = false end end
+			-- первым делом SaveGear (каждая доля секунды — урон); подъём вверх тем же кадром, режимы — после
 			local r = hrp()
 			local p = r and r.Position
-			if r then pcall(function() local c = player.Character:FindFirstChildOfClass("Humanoid"); if c and c.SeatPart then c.Sit = false end end) end
 			local lift = r and RunService.Heartbeat:Connect(function()
 				local rr = hrp()
 				if rr then rr.Anchored = false; rr.AssemblyLinearVelocity = Vector3.zero; rr.CFrame = CFrame.new(p + Vector3.new(0, 500, 0)) end
 			end)
-			status(("[Emergency] HP %.0f%% — сохраняю вещи и выхожу в лобби"):format(hpPct()))
+			local pct = hpPct()
+			task.defer(function() -- defer: выполнится, когда запрос SaveGear уже ушёл
+				for k in pairs(State) do if k ~= "SkipCutscenes" then State[k] = false end end
+				pcall(function() local c = hum(); if c and c.SeatPart then c.Sit = false end end)
+				status(("[Emergency] HP %.0f%% — сохраняю вещи и выхожу в лобби"):format(pct))
+			end)
 			local ok = p and AS.saveNow(p, true)
 			if lift then task.delay(5, function() lift:Disconnect() end) end
 			if not ok then status("[Emergency] сохранить не удалось — см. [Save] выше") end
