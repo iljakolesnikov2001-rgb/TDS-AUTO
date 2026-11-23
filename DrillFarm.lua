@@ -923,7 +923,7 @@ local function oldGear()
 			if t:IsA("Tool") then
 				local cat = t:GetAttribute("Category") or ""
 				if cat == "Melee" then table.insert(melee, t)
-				elseif cat == "Armor" and (plainArmor(t) or worse(t)) or cat:find("Gun") or cat == "Tool" and t:GetAttribute("Class") ~= "Pickaxe" and t:GetAttribute("ActionType") ~= "Use" then
+				elseif cat == "Armor" and (plainArmor(t) or worse(t)) or cat:find("Gun") or t:GetAttribute("ActionType") == "Shoot" or cat == "Tool" and t:GetAttribute("Class") ~= "Pickaxe" and t:GetAttribute("ActionType") ~= "Use" then
 					table.insert(out, t)
 				end
 			end
@@ -939,6 +939,10 @@ local function sellOldGear(mine)
 		local before = {}
 		if folder then for _, it in ipairs(folder:GetChildren()) do before[it] = true end end
 		local name = t:GetAttribute("DisplayName") or t.Name
+		-- предмет из рук падает под ноги: встаём прямо на квадрат продажи, иначе он лежит на полу и подбирается снова
+		local r, sp = hrp(), DF_sellSpot and DF_sellSpot.Parent and pos(DF_sellSpot)
+		if r and sp then r.AssemblyLinearVelocity = Vector3.zero; r.CFrame = CFrame.new(sp + Vector3.new(0, 3, 0)) end
+		task.wait(0.15)
 		if dropTool(t) then
 			status("[Sell] продаю старое: " .. name)
 			if folder then
@@ -1023,6 +1027,8 @@ sellAll = function(sellPart)
 	local spot = sellPart.Parent and sellPart.Parent.Parent
 		and sellPart.Parent.Parent:FindFirstChild("SellSpot", true) or sellPart
 	DF_sellStand(spot)
+	DF_sellSpot = spot
+	local coins0 = call("CurrencyService", "GetCurrency")
 	task.wait(0.3)
 	local mine, failed = {}, {}
 	-- быстрый проход: всё продаваемое подряд через DropGroup(id) (~0.1 с на предмет), без опроса инвентаря
@@ -1100,16 +1106,22 @@ sellAll = function(sellPart)
 		return
 	end
 	-- ждём свой мешок с деньгами (Money_Sack, BagCreator = мы) и подбираем
-	local t0, got = os.clock(), 0
+	local t0, got, paid = os.clock(), 0, false
 	while os.clock() - t0 < 12 do
 		local any = false
 		for _, it in ipairs(folder:GetChildren()) do
 			if isMySack(it) then any = true; if grabSack(it) then got += 1 end end
 		end
 		if got > 0 and not any then break end
+		-- монеты уже пришли без мешка (бывает): не стоим 12 с впустую
+		if not any and os.clock() - t0 > 2 then
+			local c = call("CurrencyService", "GetCurrency")
+			if type(c) == "number" and type(coins0) == "number" and c > coins0 then paid = true; break end
+		end
 		task.wait(0.4)
 	end
-	status(got > 0 and ("[Sell] готово, мешков подобрано: " .. got) or "[Sell] мешок с деньгами не найден/не поднялся")
+	status(got > 0 and ("[Sell] готово, мешков подобрано: " .. got) or paid and "[Sell] готово, монеты зачислены сразу"
+		or "[Sell] мешок с деньгами не найден/не поднялся")
 end
 
 
