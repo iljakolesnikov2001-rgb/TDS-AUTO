@@ -57,6 +57,7 @@ local CONFIG = {
 	SellKeepRarity   = { "Legendary", "Mythic", "Exotic", "Secret", "Divine" }, -- не продавать
 	SellKeepCategory = { "Fuel", "Consumable" },  -- топливо не продаём
 	BagCapTarget     = 50,   -- SackStorage покупаем первым, пока вместимость мешка меньше
+	EmergencyHpPct   = 5,    -- HP ≤ этого % — мгновенно: вещи в сохранение (бесплатно, пока жив) и выход в лобби; 0 — выкл
 	CoalKeep         = 5,    -- угля в мешке держим столько, лишний продаём
 	MoveSpeed        = 540,  -- студов/сек при перелёте
 	PickupDelay      = 0.05,
@@ -3687,6 +3688,31 @@ local loops = {
 	end,
 	SkipCutscenes = skipCutscene,
 }
+-- аварийный выход: HP ≤ EmergencyHpPct — сразу уносим персонажа вверх (урон прекращается) и сохраняем вещи
+-- через SaveGear (бесплатно только живым; после смерти это Robux) — сервер кидает в лобби. Свой поток на
+-- каждый кадр: не зависит от основного цикла (23.11 он завис, и бот умер, не реагируя)
+task.spawn(function()
+	local fired = false
+	while Running do
+		RunService.Heartbeat:Wait()
+		local h = hum()
+		if not fired and State.Auto and CONFIG.EmergencyHpPct > 0 and h and h.Health > 0 and hpPct() <= CONFIG.EmergencyHpPct then
+			fired = true
+			for k in pairs(State) do if k ~= "SkipCutscenes" then State[k] = false end end
+			local r = hrp()
+			local p = r and r.Position
+			if r then pcall(function() local c = player.Character:FindFirstChildOfClass("Humanoid"); if c and c.SeatPart then c.Sit = false end end) end
+			local lift = r and RunService.Heartbeat:Connect(function()
+				local rr = hrp()
+				if rr then rr.Anchored = false; rr.AssemblyLinearVelocity = Vector3.zero; rr.CFrame = CFrame.new(p + Vector3.new(0, 500, 0)) end
+			end)
+			status(("[Emergency] HP %.0f%% — сохраняю вещи и выхожу в лобби"):format(hpPct()))
+			local ok = p and AS.saveNow(p, true)
+			if lift then task.delay(5, function() lift:Disconnect() end) end
+			if not ok then status("[Emergency] сохранить не удалось — см. [Save] выше") end
+		end
+	end
+end)
 -- сторож: шаг цикла висит > 30 с (где-то вечное ожидание) — пишем, где завис, и перезапускаем цикл;
 -- при мало HP сначала выдёргиваем персонажа вверх (23.11: завис в данже на 220 с и умер без единой строки лога)
 local loopCo, loopAt = {}, {}
