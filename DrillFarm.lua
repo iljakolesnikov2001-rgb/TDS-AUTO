@@ -2970,7 +2970,7 @@ local function autoStep()
 		end
 		track()
 		local burstReady = function() return (drill:GetAttribute("PowerBurst") or 0) > 0 and os.clock() > (DF_boostNext or 0) end
-		if os.clock() - AS.wallHitAt < 4 then
+		if os.clock() - AS.wallHitAt < 8 then
 			-- Power Burst умножает урон по стене, но жмётся только с места водителя: сесть, нажать, обратно
 			if burstReady() then
 				Phase = "Power Burst по стене"
@@ -2989,7 +2989,7 @@ local function autoStep()
 					-- топливо кончается, а заправиться есть чем — выходим заправить
 					if fuelPct() < 25 and (#fuelTools() > 0 or #corpses() > 0) then return false end
 					if burstReady() or (hpPct() >= 85 and #enemies(45, dp) > 0) then return false end
-					return wall.Parent ~= nil and h > 0 and os.clock() - AS.wallHitAt < 4 and fuelPct() > 3
+					return wall.Parent ~= nil and h > 0 and os.clock() - AS.wallHitAt < 8 and fuelPct() > 3
 				end)
 				return
 			end
