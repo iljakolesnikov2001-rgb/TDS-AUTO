@@ -1865,6 +1865,8 @@ local function sellStep(center, force)
 	local n, cap = bagUsage()
 	if not force and not (n and cap and cap > 0 and n / cap * 100 >= CONFIG.SellAtPct) then return false end
 	if not force and os.clock() < sellNext then return false end
+	-- после продажи в сумке остаётся непродаваемое (топливо, аптечки, редкое) — снова едем, только когда прибавилось
+	if not force and DF_sellLeft and n <= DF_sellLeft + 2 then return false end
 	sellNext = os.clock() + 4
 	local best, bd
 	for _, sp in ipairs(findSellParts()) do
@@ -1882,6 +1884,7 @@ local function sellStep(center, force)
 	Selling = false
 	if ok then Stats.sells += 1 else status("[Sell] ошибка: " .. tostring(err)) end
 	sellNext = os.clock() + 20
+	DF_sellLeft = bagUsage() -- глобал: у главного блока лимит 200 локальных
 	return true
 end
 
@@ -2076,8 +2079,13 @@ local function shopStep(center, far)
 			status(("[Shop] касса: %s (ждали %s) — не покупаю"):format(tostring(quote), tostring(cost))); return
 		end
 		buy:InvokeServer(bp)
-		task.wait(1)
-		local after = call("CurrencyService", "GetCurrency")
+		-- ждём списания монет, а не фиксированную секунду
+		local after
+		for _ = 1, 8 do
+			task.wait(0.15)
+			after = call("CurrencyService", "GetCurrency")
+			if type(after) == "number" and after < coins then break end
+		end
 		if type(after) ~= "number" or after >= coins then status("[Shop] покупка не прошла: " .. name); return end
 		Stats.bought = (Stats.bought or 0) + 1
 		shopNext = os.clock() + 1 -- купили — сразу смотрим следующий товар
@@ -2172,6 +2180,30 @@ local function enterGate(g, key)
 		status("[Dungeon] вошёл: " .. g.Name)
 	else
 		status("[Dungeon] вход не сработал: " .. g.Name)
+	end
+end
+-- скрипт перезапустили, когда персонаж уже внутри данжа: продолжаем его, а не улетаем к буру
+do
+	local r = hrp()
+	if r and inZone(r.Position) then
+		local best, bd
+		for _, g in ipairs(workspace:GetChildren()) do
+			if g:IsA("Model") and g.Name:sub(1, #CONFIG.GateName) == CONFIG.GateName then
+				for _, d in ipairs(g:GetDescendants()) do
+					if d:IsA("ProximityPrompt") and d.ActionText == "Exit" then
+						local p = promptPos(d)
+						if p and flat(p, r.Position) < 260 and (not bd or flat(p, r.Position) < bd) then best, bd = g, flat(p, r.Position) end
+					end
+				end
+			end
+		end
+		if best then
+			dungeonActive, curGate, waveWaitAt = true, best, 0
+			dungeonStart, dungeonIdle = os.clock(), os.clock()
+			local k = gateKey(best)
+			if k then gateDone[k] = true end
+			status("[Dungeon] продолжаю после перезапуска: " .. best.Name)
+		end
 	end
 end
 
@@ -2675,7 +2707,7 @@ local function autoStep()
 	if #near >= 4 then
 		if hpPct() < CONFIG.SafeHpPct + 10 and heal(CONFIG.SafeHpPct + 10) then return end
 		if hpPct() >= CONFIG.SafeHpPct + 10 then AS.hordeFight = true end
-		if not AS.hordeFight then Phase = ("Орда (%d): восстанавливаюсь"):format(#near); hide("орда у бура: " .. #near); return end
+		if not AS.hordeFight then Phase = ("Орда (%d): восстанавливаюсь"):format(#near); hide("орда у бура: " .. #near, function() return hpPct() < CONFIG.SafeHpPct + 10 end); return end -- ждём тот же порог, с которого выходим в бой, иначе прыгаем туда-обратно
 		Phase = ("Орда (%d): бью по одному"):format(#near)
 		driveStop()
 		-- самый высокий (Goblin Brute) — встаём ему на макушку и бьём сверху: мелкие гоблины туда не достают
