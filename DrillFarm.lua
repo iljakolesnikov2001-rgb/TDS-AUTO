@@ -615,13 +615,14 @@ end
 -- Mining: авто-фарм копает уголь на топливо тем же кодом, не трогая тумблер «Фарм руды»
 local Mining = false
 local function farming() return State.Farm or Mining end
-local function farmStep()
+local function farmStep(target)
 	if bagFull() then
 		onBagFull("Farm")
 		if bagFull() and not Mining then State.Farm = false end
 		return
 	end
-	local node = nearest(oreNodes(), CONFIG.OreSearchRadius)
+	-- target: конкретная жила (авто-фарм выбирает её у бура, а персонаж может стоять далеко от неё)
+	local node = target or nearest(oreNodes(), CONFIG.OreSearchRadius)
 	if not node then return end
 	local ore = node:FindFirstChild("Ore") or node
 	local rock = node:FindFirstChild("Rock")
@@ -2806,10 +2807,13 @@ local function autoStep()
 		if node then
 			Phase = "Копаю руду у бура"
 			driveStop()
-			local names, radius = CONFIG.OreNames, CONFIG.OreSearchRadius
-			CONFIG.OreNames, CONFIG.OreSearchRadius, Mining = {}, CONFIG.AutoOreRadius + 40, true
-			pcall(farmStep)
-			CONFIG.OreNames, CONFIG.OreSearchRadius, Mining = names, radius, false
+			-- жила не поддаётся (не долететь/не добить) — после 3 попыток пропускаем, иначе бур стоит вечно
+			AS.oreTries = AS.oreTries or setmetatable({}, { __mode = "k" })
+			AS.oreTries[node] = (AS.oreTries[node] or 0) + 1
+			if AS.oreTries[node] > 3 then node:SetAttribute("_DF_Skip", true); status("[Farm] жила не поддаётся — пропускаю") ; return end
+			Mining = true
+			pcall(farmStep, node)
+			Mining = false
 			return
 		end
 	end
