@@ -6,7 +6,7 @@
 local CONFIG = {
 	-- Авто-фарм
 	WorkRadius       = 300,  -- сундуки/лут/монстры ищем в этом радиусе от бура (дальше игра телепортирует к буру)
-	GateStopDist     = 150,  -- останавливаемся у ворот подземелья ближе этого (по горизонтали: ворота стоят сбоку)
+	GateStopDist     = 300,  -- заходим в подземелья с воротами ближе этого к буру (по горизонтали: ворота стоят сбоку)
 	WallStopDist     = 110,  -- перед финальной стеной (при ударе идёт волна врагов) ждём полное HP
 	GuardHpPct       = 55,   -- HP ниже — прячемся под землю
 	SafeHpPct        = 70,   -- выходим из укрытия, когда HP восстановилось
@@ -265,6 +265,9 @@ end
 local function refOf(v)
 	if typeof(v) == "Instance" and v:IsDescendantOf(workspace) then
 		local n = itemNode(v)
+		-- предмет уже в руках/на персонаже (EquipTool, Drop...) — это не подбор с земли
+		local holder = n and n:FindFirstAncestorOfClass("Model")
+		if n and holder and Players:GetPlayerFromCharacter(holder) then return end
 		if n then return "item", n, v == n and "inst" or "part" end
 		n = chestNode(v)
 		if n then return "chest", n, v == n and "inst" or "part" end
@@ -2699,6 +2702,11 @@ local function autoStep()
 		return
 	end
 	AS.hordeFight = false
+	-- моб бьёт нас самих вдали от бура (копаем руду/уголь, собираем лут) — сначала убить, иначе копаем под ударами
+	if #near == 0 and hpPct() >= CONFIG.GuardHpPct then
+		local mine = enemies(20)
+		if #mine > 0 then Phase = "Бой рядом со мной"; driveStop(); killOne(mine[1]); return end
+	end
 	if #near > 0 then
 		-- сидеть за рулём под ударами нельзя: либо бой (HP хватает), либо укрытие
 		if hpPct() < CONFIG.GuardHpPct then Phase = "Укрытие (мобы у бура)"; hide("мобы у бура"); return end
@@ -2712,6 +2720,19 @@ local function autoStep()
 		return
 	end
 
+	-- подземелья — в приоритете: раньше заправки, продажи, магазина и прокачки
+	if not State.NoDrive and pitStep(dp, 200) then return end
+	local g, key = gateNear(dp)
+	if g then
+		-- ждать HP на месте нельзя — бьют; лечимся аптечкой, иначе ждём в укрытии
+		if hpPct() < CONFIG.SafeHpPct then
+			if heal(CONFIG.SafeHpPct) then return end
+			Phase = "Жду HP перед подземельем (в укрытии)"
+			hide("жду HP перед подземельем", function() return hpPct() < CONFIG.SafeHpPct end)
+			return
+		end
+		Phase = "Вход в подземелье"; enterGate(g, key); return
+	end
 	if os.clock() > refuelNext and ((fp < CONFIG.FuelTargetPct and (#fuelTools() > 0 or #corpses() > 0)) or (fp < 90 and #corpses() >= 3)) then Phase = "Заправка"; refuel(); return end
 	if sellStep(dp) then return end
 	-- ивент Money Fog (Lighting.Event = "MoneyFog"): продажа выгоднее — сбываем всё сразу, на ближайшем столе
@@ -2739,22 +2760,10 @@ local function autoStep()
 	if armorStep() then Phase = "Надеваю броню"; return end
 	if upgradeStep() then Phase = "Прокачка бура"; return end
 
-	if not State.NoDrive and pitStep(dp, 200) then return end
-	local g, key = gateNear(dp)
-	if g then
-		-- ждать HP на месте нельзя — бьют; лечимся аптечкой, иначе ждём в укрытии
-		if hpPct() < CONFIG.SafeHpPct then
-			if heal(CONFIG.SafeHpPct) then return end
-			Phase = "Жду HP перед подземельем (в укрытии)"
-			hide("жду HP перед подземельем", function() return hpPct() < CONFIG.SafeHpPct end)
-			return
-		end
-		Phase = "Вход в подземелье"; enterGate(g, key); return
-	end
 
 	if chestStep(dp, CONFIG.WorkRadius) then Phase = "Сундуки"; return end
 	if lootStep(dp, CONFIG.WorkRadius) then Phase = "Сбор лута"; return end
-	if fp < 20 and #fuelTools() == 0 then
+	if fp < CONFIG.FuelTargetPct and #fuelTools() == 0 then
 		if lootStep(dp, CONFIG.FuelSearchRadius, true) then Phase = "Ищу топливо"; return end
 		-- уголь, только что выкопанный вдали от бура, лежит у нас под ногами
 		local me0 = hrp()
