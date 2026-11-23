@@ -919,6 +919,13 @@ local function oldGear()
 		-- броня с бонусом к мешку (Hoarder) — не продаём: вместимость важнее брони
 		if tostring(t:GetAttribute("DisplayName") or t.Name):find("Hoarder") then return false end
 		for k in pairs(t:GetAttributes()) do if k:find("Capacity") then return false end end
+		-- броня с эффектами (Phoenix, Kings, Champions, короны…: ReplicatedStorage.Shared.ArmorEffects) — не продаём
+		if DF_armorFx == nil then
+			local ok, m = pcall(require, game:GetService("ReplicatedStorage").Shared.ArmorEffects)
+			DF_armorFx = ok and type(m) == "table" and m or false
+		end
+		local id = t:GetAttribute("ItemDatabaseId") or t.Name
+		if DF_armorFx and (DF_armorFx[id] or DF_armorFx[t.Name]) then return false end
 		local h = c:FindFirstChildOfClass("Humanoid")
 		return a < have or (t:GetAttribute("SpeedBoost") or 0) <= (h and h:GetAttribute("SpeedBoost") or 0)
 	end
