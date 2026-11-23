@@ -1349,6 +1349,15 @@ local function upgradeStep(force)
 	local opts, ver = call("DrillService", "FetchOptions")
 	if type(opts) ~= "table" or type(ver) ~= "number" then return false end
 	local best, bestRank
+	-- SackStorage = Carry Capacity (+5 за уровень): предложен, но пока не по карману — копим, остальное не берём
+	local _, cap0 = bagUsage()
+	for _, o in ipairs(opts) do
+		if type(o) == "table" and o.UpgradeName == "SackStorage" and o.Type == "Coins" and type(o.Cost) == "number"
+			and o.Cost > coins and cap0 and cap0 < CONFIG.BagCapTarget then
+			Phase = ("Коплю на вместимость мешка: %d/%d"):format(coins, o.Cost)
+			return false
+		end
+	end
 	for _, o in ipairs(opts) do
 		if type(o) == "table" and o.Type == "Coins" and type(o.Cost) == "number" and o.Cost > 0 and o.Cost <= coins
 			and not table.find(CONFIG.UpgradeNever, o.UpgradeName) then
