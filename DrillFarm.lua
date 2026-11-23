@@ -2750,7 +2750,7 @@ local function dungeonRun()
 		r = hrp()
 		if r and away(r.Position) then
 			status("[Dungeon] уже снаружи — выхожу из режима данжа")
-			dungeonActive, curGate = false, nil; table.clear(killSkip)
+			dungeonActive = false; table.clear(killSkip) -- curGate обнулит trackedDungeonRun после учёта захода
 			return
 		end
 	end
@@ -3134,7 +3134,7 @@ local function autoStep()
 		return
 	end
 	if hpPct() < CONFIG.GuardHpPct then
-		if inDungeon() then exitDungeon("мало HP") end
+		if inDungeon() then exitDungeon("мало HP"); trackedDungeonRun(true) end -- true: только учёт захода (иначе неудачный заход не считается и бот лезет в тот же данж бесконечно)
 		-- аптечек нет, а монеты есть — в ближайший магазин за бинтами (быстрее, чем ждать регенерацию)
 		if not inDungeon() and #medkits() == 0 and os.clock() > AS.farShopNext and (coinsCache2() or 0) >= 10 then
 			AS.farShopNext = os.clock() + 60
@@ -3544,8 +3544,8 @@ end
 
 -- проход данжа с учётом: вышли — данж пройден, если волна завершена и сундуков не осталось
 -- (иначе, напр. после выхода по низкому HP, — вернёмся)
-trackedDungeonRun = function()
-	dungeonRun()
+trackedDungeonRun = function(accountOnly)
+	if not accountOnly then dungeonRun() end
 	if not inDungeon() and curGate then
 		local k = gateKey(curGate)
 		local wave = curGate:FindFirstChild("Wave")
@@ -3648,7 +3648,7 @@ dungeonFarmStep = function()
 	if workspace:GetAttribute("InCutScene") == true then Phase = "Катсцена"; return end
 	if heal(60) then return end
 	if hpPct() < CONFIG.GuardHpPct then
-		if inDungeon() then exitDungeon("мало HP") end
+		if inDungeon() then exitDungeon("мало HP"); trackedDungeonRun(true) end -- true: только учёт захода (иначе неудачный заход не считается и бот лезет в тот же данж бесконечно)
 		Phase = "Укрытие (мало HP)"; hide("мало HP"); return
 	end
 	if inDungeon() then return trackedDungeonRun() end
