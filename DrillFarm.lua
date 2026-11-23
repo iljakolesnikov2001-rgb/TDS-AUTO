@@ -2603,6 +2603,28 @@ end
 -- «Застрял» — за рулём, но за 4 с почти не сдвинулись (упёрлись в стену/скалу) — тогда уже бой.
 -- мелкое состояние авто-фарма одной таблицей (у Luau лимит 200 локальных в файле)
 local AS = { progAt = 0, farShopNext = 0, coinsAt2 = 0, farSellNext = 0, fogSellNext = 0, wallHitAt = 0, hordeFight = false }
+-- СТАРТОВЫЙ ЯЩИК (сохранённые вещи): PlayerService.SetLoadout({имя=1}) работает с любой точки (проверено).
+-- Берём только лучший по Value меч, кирку и броню на каждый слот; остальное остаётся в ящике.
+AS.crateClaim = function()
+	if getgenv().DF_CrateJob == game.JobId then return end
+	local items = call("PlayerService", "GetCrateItems")
+	if type(items) ~= "table" or #items == 0 then return end
+	local DB = require(RS.Shared.ItemDatabase)
+	local best = {}
+	for _, it in ipairs(items) do
+		local n = type(it) == "table" and it.Name or it
+		local key = type(it) == "table" and (it.Key or n) or n
+		local i = DB.Get(n); local a = i and i.Attributes or {}
+		local slot = (a.Category == "Armor" and a.ArmorType) or ((a.Category == "Melee" or a.Category == "Pickaxe") and a.Category)
+		if slot and (not best[slot] or (a.Value or 0) > best[slot].v) then best[slot] = { k = key, v = a.Value or 0 } end
+	end
+	local lo, names = {}, {}
+	for _, b in pairs(best) do lo[b.k] = 1; table.insert(names, b.k) end
+	if #names == 0 then return end
+	local ok = call("PlayerService", "SetLoadout", lo)
+	if ok then getgenv().DF_CrateJob = game.JobId end
+	status(("[Crate] из ящика: %s — %s"):format(table.concat(names, ", "), ok and "взял" or "не вышло"))
+end
 local function drillStuck(dp)
 	if not driveStarted then AS.progX, AS.progAt = dp, os.clock(); return false end
 	if not AS.progX or (dp - AS.progX).Magnitude > 6 then AS.progX, AS.progAt = dp, os.clock(); return false end
@@ -4072,4 +4094,5 @@ getgenv().DF = { State = State, CONFIG = CONFIG, Stats = Stats, status = status,
 	gateNear = gateNear, enterGate = enterGate, exitDungeon = exitDungeon, dungeonRun = dungeonRun,
 	finalWallAhead = finalWallAhead, oldGear = oldGear, AS = AS, shopStep = shopStep, armorStep = armorStep, smeltStep = smeltStep, phase = function() return Phase end }
 status("[DrillFarm] Загружен")
+task.spawn(function() task.wait(3); pcall(AS.crateClaim) end)
 end)()
