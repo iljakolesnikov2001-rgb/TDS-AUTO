@@ -1456,6 +1456,7 @@ local function hordeKill(m, center)
 	local t0, hp, last = os.clock(), h.Health, os.clock()
 	local fallback, surrounded = false, false
 	local others, othersAt, dir, dirScore = {}, 0, nil, -1
+	local myHp0, losing = hpPct(), false
 	Moving = true
 	while Running and (State.KillAura or busy()) and m.Parent and h.Health > 0 and os.clock() - t0 < 15 and hpPct() >= CONFIG.GuardHpPct do
 		local r, p = hrp(), pos(m)
@@ -1487,6 +1488,8 @@ local function hordeKill(m, center)
 			-- окружили: свободной точки нет (везде моб ближе 6 st), и HP уже не полный — бросаем, дальше укрытие
 			if bestS < 6 and hpPct() < CONFIG.SafeHpPct then surrounded = true; break end
 		end
+		-- бой невыгоден (Mole Man снял 2/3 HP и почти цел): потеряли >25% HP, а у цели >40% — бросаем на 30 с
+		if myHp0 - hpPct() > 25 and h.Health > h.MaxHealth * 0.4 then losing = true; break end
 		local stand = p + Vector3.new(math.cos(dir), 0, math.sin(dir)) * range
 		r.AssemblyLinearVelocity = Vector3.zero
 		r.CFrame = CFrame.lookAt(stand, Vector3.new(p.X, stand.Y, p.Z))
@@ -1501,8 +1504,9 @@ local function hordeKill(m, center)
 	Moving = false
 	if fallback and m.Parent and h.Health > 0 and hpPct() >= CONFIG.GuardHpPct then return DF_killClose(m) end
 	local dead = not m.Parent or h.Health <= 0
-	if dead then Stats.kills += 1 elseif not surrounded then killSkip[m] = os.clock() + 10 end
-	status(("[Horde] %s: %s за %.1fс (дистанция %d)%s"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0, range, surrounded and " — окружили, отхожу" or ""))
+	if dead then Stats.kills += 1 elseif losing then killSkip[m] = os.clock() + 30 elseif not surrounded then killSkip[m] = os.clock() + 10 end
+	status(("[Horde] %s: %s за %.1fс (дистанция %d)%s"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0, range,
+		surrounded and " — окружили, отхожу" or losing and " — бой невыгоден, бросаю" or ""))
 end
 
 -- Одиночная цель: с максимальной дальности оружия, со стороны игрока; не бьётся — hordeKill сам подойдёт вплотную
@@ -2899,21 +2903,36 @@ local function autoStep()
 			return h
 		end
 		track()
+		local burstReady = function() return (drill:GetAttribute("PowerBurst") or 0) > 0 and os.clock() > (DF_boostNext or 0) end
 		if os.clock() - AS.wallHitAt < 4 then
-			Phase = ("Бур ломает стену сам (%s HP) — жду в укрытии"):format(tostring(wall:GetAttribute("Health")))
-			hide("бур ломает стену", function()
-				local h = track()
-				Phase = ("Бур ломает стену сам (%d HP, топливо %d%%) — жду в укрытии"):format(math.floor(h), math.floor(fuelPct()))
-				-- топливо кончается, а заправиться есть чем — выходим заправить
-				if fuelPct() < 25 and (#fuelTools() > 0 or #corpses() > 0) then return false end
-				return wall.Parent ~= nil and h > 0 and os.clock() - AS.wallHitAt < 4 and fuelPct() > 3
-			end)
+			-- Power Burst умножает урон по стене, но жмётся только с места водителя: сесть, нажать, обратно
+			if burstReady() then
+				Phase = "Power Burst по стене"
+				drive()
+				task.wait(0.3)
+				if driveCall("ActivateBoost") then DF_boostNext = os.clock() + 70; status("[Drive] Power Burst по стене")
+				else DF_boostNext = os.clock() + 5 end
+				return
+			end
+			-- HP много, а у бура волна — не прячемся, а бьём (их трупы — топливо для стены); ниже обычный бой у бура
+			if not (hpPct() >= 80 and #enemies(45, dp) > 0) then
+				Phase = ("Бур ломает стену сам (%s HP) — жду в укрытии"):format(tostring(wall:GetAttribute("Health")))
+				hide("бур ломает стену", function()
+					local h = track()
+					Phase = ("Бур ломает стену сам (%d HP, топливо %d%%) — жду в укрытии"):format(math.floor(h), math.floor(fuelPct()))
+					-- топливо кончается, а заправиться есть чем — выходим заправить
+					if fuelPct() < 25 and (#fuelTools() > 0 or #corpses() > 0) then return false end
+					if burstReady() or (hpPct() >= 85 and #enemies(45, dp) > 0) then return false end
+					return wall.Parent ~= nil and h > 0 and os.clock() - AS.wallHitAt < 4 and fuelPct() > 3
+				end)
+				return
+			end
+		else
+			heal(75)
+			Phase = "Подъезжаю к финальной стене"
+			drive()
 			return
 		end
-		heal(75)
-		Phase = "Подъезжаю к финальной стене"
-		drive()
-		return
 	end
 
 	-- пустой бак — бур стоит, и мобы копятся: заправить сразу (пара секунд), если у самого бура чисто
