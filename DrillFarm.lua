@@ -1878,6 +1878,14 @@ end
 local gearGain, wearItem -- ниже (магазин)
 local function lootOne(center, radius, fuelOnly)
 	local full = bagFull()
+	-- мешок полон: дорогую вещь всё равно берём, выкинув самую дешёвую продаваемую (если та вдвое дешевле)
+	local cheap
+	if full and not fuelOnly then
+		for _, e in ipairs(invEntries()) do
+			if sellable(e) and (not cheap or (e.Value or 0) < (cheap.Value or 0)) then cheap = e end
+		end
+	end
+	local function room(it) return not full or (cheap ~= nil and (it:GetAttribute("Value") or 0) >= math.max(100, (cheap.Value or 0) * 2)) end
 	-- уголь занимает слот мешка за каждую штуку (было 15): больше CoalKeep не копим, пока бак не просел
 	local fuelStocked = DF_coalCount() >= CONFIG.CoalKeep and fuelPct() >= 50
 	local best, bd
@@ -1893,17 +1901,18 @@ local function lootOne(center, radius, fuelOnly)
 			if it:GetAttribute("ItemDatabaseId") == "Money_Sack" then want = not fuelOnly and isMySack(it)
 			-- трупы: топливо (5–10) и товар (гоблин 10, Bandit Miner 380): берём для бака или если дорогие
 			elseif it:GetAttribute("Category") == "Corpse" then
-				want = not full and (fuelPct() < 85 or (it:GetAttribute("Value") or 0) >= 50 or hasKey(name, CONFIG.CorpseSellOnly))
+				want = room(it) and (fuelPct() < 85 or (it:GetAttribute("Value") or 0) >= 50 or hasKey(name, CONFIG.CorpseSellOnly))
 			elseif it:GetAttribute("Class") == "Medkit" then
 				-- аптечки/бинты с земли — только до нормы (иначе выкинутые лишние тут же подбираем обратно)
 				local band = name:find("Bandage") ~= nil
 				want = not fuelOnly and not full and DF_medCount(band) < (band and CONFIG.BandageStock or CONFIG.MedkitStock)
 			elseif fuelOnly then want = isFuel and not full and not fuelStocked
-			else want = not full and ((isFuel and not fuelStocked) or ((it:GetAttribute("Value") or 0) >= CONFIG.ItemsMinValue
+			else want = room(it) and ((isFuel and not fuelStocked) or ((it:GetAttribute("Value") or 0) >= CONFIG.ItemsMinValue
 				and not hasKey(name, CONFIG.IgnoredItems)))
 			end
 			if want then
-				local d = dist(it)
+				-- дорогое — первым (трупы исчезают): чем дороже и ближе, тем раньше
+				local d = dist(it) / (1 + (it:GetAttribute("Value") or 0) / 100)
 				if not bd or d < bd then best, bd = it, d end
 			end
 		end
@@ -1921,12 +1930,23 @@ local function lootOne(center, radius, fuelOnly)
 		wearItem(best)
 		return true
 	end
+	if full and cheap then
+		local drop = knit("CarryInventoryService", "DropGroup")
+		if drop and pcall(function() drop:InvokeServer(cheap.Id) end) then
+			inventory(true)
+			status(("[Loot] мешок полон — выкинул %s (%d) ради %s (%d)"):format(tostring(cheap.DisplayName or cheap.Name), cheap.Value or 0, name, best:GetAttribute("Value") or 0))
+		end
+	end
 	if (pos(best) - (hrp() and hrp().Position or pos(best))).Magnitude < 600 or moveTo(best, collecting) then
 		if pickupItem(best) then
 			Stats.items += 1
 			status("[Loot] подобрал: " .. name)
 			task.wait(CONFIG.PickupDelay)
 			return "picked"
+		elseif bagFull() then
+			-- мешок забился, пока летели: вещь не виновата — не вносим в чёрный список
+			skipUntil[best] = os.clock() + 3
+			status("[Loot] мешок полон, не влез: " .. name)
 		else
 			skipUntil[best] = os.clock() + 60
 			local sid = best:GetAttribute("SessionSnapshotItemId")
@@ -3375,7 +3395,8 @@ trackedDungeonRun = function()
 			local d = getDrill()
 			local c = (d and pos(d)) or (hrp() and hrp().Position)
 			if c then pcall(sellStep, c, true) end
-			farmedAt[k], gateDone[k] = os.clock() + (bagFull() and 120 or 3), nil -- не продалось — не крутимся у входа
+			-- gateDone: у бура не заходим сразу обратно; вернёмся погоней (farmedAt), когда мешок разгружен
+			gateDone[k], farmedAt[k] = true, os.clock() + (bagFull() and 60 or 3)
 		elseif k then
 			if (not wave or wave:GetAttribute("WaveCompleted") == true) and #idleChests(curGate) == 0 then
 				farmedAt[k] = math.huge
@@ -4214,5 +4235,45 @@ getgenv().DF = { State = State, CONFIG = CONFIG, Stats = Stats, status = status,
 	gateNear = gateNear, enterGate = enterGate, exitDungeon = exitDungeon, dungeonRun = dungeonRun,
 	finalWallAhead = finalWallAhead, oldGear = oldGear, AS = AS, shopStep = shopStep, armorStep = armorStep, smeltStep = smeltStep, phase = function() return Phase end }
 status("[DrillFarm] Загружен")
+
+-- Огонь/лава: телепорты (лут, сундуки, укрытие) иногда ставят персонажа в костёр/жаровню (тег Fire) или в лаву —
+-- он загорается и теряет HP. Каждый кадр выталкиваем из опасной зоны вбок, где бы ни был телепорт.
+task.spawn(function()
+	local CS2, hazards, scanAt, lastMsg = game:GetService("CollectionService"), {}, 0, 0
+	local function isLava(m) return m == Enum.Material.CrackedLava end
+	while Running do
+		RunService.Heartbeat:Wait()
+		local r = hrp()
+		if r then
+			if os.clock() - scanAt > 2 then
+				scanAt, hazards = os.clock(), {}
+				for _, t in ipairs({ "Fire", "Lava", "Hazard" }) do
+					for _, p in ipairs(CS2:GetTagged(t)) do if p:IsA("BasePart") then table.insert(hazards, p) end end
+				end
+			end
+			local push
+			for _, p in ipairs(hazards) do
+				if p.Parent then
+					local d = r.Position - p.Position
+					local rad = math.max(p.Size.X, p.Size.Z) / 2 + 5
+					local flat2 = Vector3.new(d.X, 0, d.Z)
+					if flat2.Magnitude < rad and math.abs(d.Y) < p.Size.Y / 2 + 6 then
+						local dir = flat2.Magnitude > 0.1 and flat2.Unit or Vector3.new(1, 0, 0)
+						push = p.Position + dir * (rad + 3) + Vector3.new(0, d.Y, 0)
+						break
+					end
+				end
+			end
+			if not push and (isLava(r.Parent and r.Parent:FindFirstChildOfClass("Humanoid") and r.Parent:FindFirstChildOfClass("Humanoid").FloorMaterial)) then
+				push = r.Position + Vector3.new(0, 25, 0) -- стоим на лаве — вверх, дальше скрипт сам уведёт
+			end
+			if push then
+				r.AssemblyLinearVelocity = Vector3.zero
+				r.CFrame = CFrame.new(push) * (r.CFrame - r.Position)
+				if os.clock() - lastMsg > 10 then lastMsg = os.clock(); status("[Guard] огонь/лава рядом — отошёл") end
+			end
+		end
+	end
+end)
 task.spawn(function() task.wait(3); pcall(AS.crateClaim) end)
 end)()
