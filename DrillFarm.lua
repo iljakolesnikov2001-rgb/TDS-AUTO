@@ -1029,7 +1029,7 @@ sellAll = function(sellPart)
 		and sellPart.Parent.Parent:FindFirstChild("SellSpot", true) or sellPart
 	DF_sellStand(spot)
 	DF_sellSpot = spot
-	local coins0 = call("CurrencyService", "GetCurrency")
+	local coins0 = DF_call("CurrencyService", "GetCurrency")
 	task.wait(0.3)
 	local mine, failed = {}, {}
 	-- быстрый проход: всё продаваемое подряд через DropGroup(id) (~0.1 с на предмет), без опроса инвентаря
@@ -1116,7 +1116,7 @@ sellAll = function(sellPart)
 		if got > 0 and not any then break end
 		-- монеты уже пришли без мешка (бывает): не стоим 12 с впустую
 		if not any and os.clock() - t0 > 2 then
-			local c = call("CurrencyService", "GetCurrency")
+			local c = DF_call("CurrencyService", "GetCurrency")
 			if type(c) == "number" and type(coins0) == "number" and c > coins0 then paid = true; break end
 		end
 		task.wait(0.4)
@@ -1186,7 +1186,8 @@ function DF_timed(sec, label, fn, ...)
 	if not done then status("[Сеть] сервер не ответил за " .. sec .. " с: " .. label); return false end
 	return table.unpack(res, 1, res.n)
 end
-local function call(service, method, ...)
+-- глобал: sellAll (выше по файлу) тоже его зовёт
+function DF_call(service, method, ...)
 	local ok, a, b = DF_timed(8, service .. "." .. method, function(...)
 		local s = Knit.GetService(service)
 		local p = s[method](s, ...)
@@ -1196,6 +1197,7 @@ local function call(service, method, ...)
 	if not ok then return nil end
 	return a, b
 end
+local call = DF_call
 
 -- Топливо: канистры/уголь (Category=Fuel: GasCan 50, PropaneTank 200, Ore_Coal 25) лежат в мире;
 -- поднятое топливо — инструмент в рюкзаке. Заправка: взять его в руки, стоя на FuelTouchPart (проверено: 2.7 → 28).
@@ -1357,7 +1359,7 @@ local function refuel()
 	local _, after = fuelPct()
 	status(("[Fuel] заправка: %.0f → %.0f"):format(before, after))
 	if after > before + 1 then Stats.refuels += 1; return true end
-	refuelNext = os.clock() + 5 -- не получилось — не долбим каждый тик
+	refuelNext = os.clock() + 45 -- не получилось (нечем) — не бросаем руль каждые 8 с
 	return false
 end
 
