@@ -2528,7 +2528,16 @@ pitRun = function()
 		return
 	end
 	-- волны идут по таймеру: ждём; совсем долго ничего не происходит — выходим
-	if os.clock() - dungeonIdle > 60 or os.clock() - dungeonStart > 900 then exitDungeon("в яме ничего не происходит") end
+	if os.clock() - dungeonIdle > 60 or os.clock() - dungeonStart > 900 then
+		-- волна может зависнуть (Enemy=0, волна не идёт), а Exit во время волн выключен — улетаем к буру сами
+		if not exitDungeon("в яме ничего не происходит") then
+			pitTried[pit:GetAttribute("SpiderPitId") or ""] = math.huge
+			dungeonActive, curPit = false, nil
+			local d = getDrill()
+			if d then tpToDrill(d) end
+			status("[Pit] волна зависла, выхода нет — улетел к буру")
+		end
+	end
 end
 end)() -- (паучьи ямы)
 
