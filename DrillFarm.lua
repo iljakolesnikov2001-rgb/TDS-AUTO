@@ -3083,6 +3083,18 @@ local function autoStep()
 		for _, n in ipairs(oreNodes()) do
 			if hasKey(n:GetAttribute("SessionOreType") or "", { "Coal" }) and r and (n.Position - dp).Magnitude <= CONFIG.WorkRadius then hasCoal = true; break end
 		end
+		-- жила может не копаться (не долететь/не добить): 45 с без прироста топлива — бросаем на 3 мин и едем
+		-- полный мешок: уголь не поднять, а farmStep при полном мешке крутит продажу по кругу
+		if hasCoal and (os.clock() < (AS.coalSkip or 0) or bagFull()) then hasCoal = false end
+		if hasCoal then
+			if not AS.coalT0 or fp > AS.coalFp + 1 or os.clock() - (AS.coalLast or 0) > 10 then AS.coalT0, AS.coalFp = os.clock(), fp end
+			AS.coalLast = os.clock()
+			if os.clock() - AS.coalT0 > 45 then
+				AS.coalSkip, AS.coalT0 = os.clock() + 180, nil
+				status("[Fuel] уголь не копается 45 с — еду дальше")
+				hasCoal = false
+			end
+		end
 		if hasCoal then
 			Phase = "Копаю уголь на топливо"
 			driveStop()
