@@ -1847,20 +1847,69 @@ local function smeltStep()
 	end
 	for _ = 1, 15 do center(); task.wait(0.1) end
 	Moving = false
-	-- забрать слитки (и руду, если какая-то упала мимо)
-	local bars = 0
-	for _, it in ipairs(workspace.Items:GetChildren()) do
-		local pp = not before[it] and pos(it)
-		if pp and (pp - box.Position).Magnitude < 30 and it:GetAttribute("SessionSnapshotItemId") then
-			if moveTo(it, nil) then task.wait(0.15); if pickupItem(it) and it.Name:find("Bar") then bars += 1 end end
+	-- забрать слитки (и руду, если какая-то упала мимо). Свежий предмет сервер отдаёт только когда у него
+	-- появится SessionSnapshotItemId (через 10–20 с) — раньше мы его не ждали, и слитки оставались у печи
+	local bars, got, t0 = 0, {}, os.clock()
+	Phase = "Переплавка: жду слитки"
+	repeat
+		for _, it in ipairs(workspace.Items:GetChildren()) do
+			local pp = not before[it] and not got[it] and pos(it)
+			if pp and (pp - box.Position).Magnitude < 30 and it:GetAttribute("SessionSnapshotItemId") and pickupItem(it) then
+				got[it] = true
+				if it.Name:find("Bar") then bars += 1 end
+			end
 		end
-	end
+		local n = 0
+		for _ in pairs(got) do n += 1 end
+		if n >= #list then break end
+		task.wait(0.5)
+	until os.clock() - t0 > 25 or not busy()
 	status(("[Smelt] переплавлено: %d руды → %d слитков"):format(#list, bars))
 	return true
 end
 
 -- Продажа: сумка заполнена и рядом с буром есть стол продажи
 local sellNext = 0
+-- BOUNTY: у Ozy (лагерь охотника в крепостях) трупы мобов с пометкой bounty (HasBounty) продаются дороже.
+-- Выкидываем все трупы на BountySellHitBox; то, что без bounty, подбираем обратно (уйдёт на обычный стол/в печь).
+DF_bountyStep = function(center)
+	local pads = findAll(function(d)
+		return d:IsA("BasePart") and d.Name == "BountySellHitBox" and not d:GetFullName():find("CutScene", 1, true)
+	end)
+	local pad, bd
+	for _, p in ipairs(pads) do
+		local d = flat(p.Position, center)
+		if d <= CONFIG.WorkRadius and (not bd or d < bd) then pad, bd = p, d end
+	end
+	if not pad then return false end
+	local list = {}
+	for _, e in ipairs(invEntries()) do if e.Category == "Corpse" and not hasKey(tostring(e.Rarity or ""), CONFIG.SellKeepRarity) then table.insert(list, e) end end
+	if #list == 0 then return false end
+	local folder, dropRf = workspace:FindFirstChild("Items"), knit("CarryInventoryService", "DropGroup")
+	if not (folder and dropRf) then return false end
+	Phase = "Продажа bounty"
+	driveStop()
+	if not clearAround(pad.Position, 30) then return false end
+	local c0 = call("CurrencyService", "GetCurrency")
+	local before = {}
+	for _, it in ipairs(folder:GetChildren()) do before[it] = true end
+	for _, e in ipairs(list) do
+		tp(pad, Vector3.new(0, 4, 0))
+		pcall(function() dropRf:InvokeServer(e.Id) end)
+		task.wait(0.1)
+	end
+	task.wait(2)
+	local back, sold = 0, 0
+	for _, it in ipairs(folder:GetChildren()) do
+		if not before[it] and it:GetAttribute("Category") == "Corpse" then
+			if it:GetAttribute("HasBounty") then sold += 1 else back += 1; pickupItem(it) end
+		end
+	end
+	local c1 = call("CurrencyService", "GetCurrency")
+	status(("[Bounty] выкинул %d трупов, bounty %d, без bounty вернул %d, монеты %s → %s"):format(#list, sold, back, tostring(c0), tostring(c1)))
+	return true
+end
+
 local function sellStep(center, force)
 	local n, cap = bagUsage()
 	if not force and not (n and cap and cap > 0 and n / cap * 100 >= CONFIG.SellAtPct) then return false end
@@ -1875,6 +1924,7 @@ local function sellStep(center, force)
 	end
 	if not best then return false end
 	pcall(smeltStep) -- руду — в слитки перед продажей (слитки дороже)
+	pcall(DF_bountyStep, center)
 	Phase = "Продажа"
 	driveStop()
 	if not clearAround(best.Position, 30) then return false end
@@ -2490,6 +2540,54 @@ end
 local trackedDungeonRun, noDriveIdle -- ниже (раздел DUNGEON FARM)
 AS.wallSeen = setmetatable({}, { __mode = "k" })
 
+-- REVIVE: на трупе тимейта (модель с CorpsePlayerUserId) висит RevivePrompt. С ReviveKit в инвентаре
+-- он бесплатный ("Revive"); без кита игра просит монеты ("Revive (N Coins)") — такой не жмём.
+AS.revPrompts = setmetatable({}, { __mode = "k" })
+AS.revTries = setmetatable({}, { __mode = "k" })
+;(function()
+	local function add(d) if d:IsA("ProximityPrompt") and d.Name == "RevivePrompt" then AS.revPrompts[d] = true end end
+	for _, d in ipairs(workspace:GetDescendants()) do add(d) end
+	table.insert(Connections, workspace.DescendantAdded:Connect(add))
+end)()
+AS.reviveKit = function()
+	local c = player.Character
+	return (c and c:FindFirstChild("ReviveKit")) or player.Backpack:FindFirstChild("ReviveKit")
+end
+AS.reviveStep = function()
+	if not AS.reviveKit() or hpPct() < CONFIG.GuardHpPct then return false end
+	local r = hrp()
+	if not r then return false end
+	local best, bd
+	for pr in pairs(AS.revPrompts) do
+		local corpse = pr.Parent and pr:FindFirstAncestorOfClass("Model")
+		local uid = corpse and corpse:GetAttribute("CorpsePlayerUserId")
+		local p = corpse and pos(corpse)
+		if p and typeof(uid) == "number" and uid ~= player.UserId and (AS.revTries[pr] or 0) < 3 then
+			local d = (p - r.Position).Magnitude
+			if d < 300 and #enemies(20, p) == 0 and (not bd or d < bd) then best, bd = pr, d end
+		end
+	end
+	if not best then return false end
+	local corpse = best:FindFirstAncestorOfClass("Model")
+	AS.revTries[best] = (AS.revTries[best] or 0) + 1
+	Phase = "Воскрешаю тимейта"
+	driveStop()
+	if not moveTo(corpse) then return true end
+	task.wait(0.3) -- игра обновляет ActionText, когда промпт показался
+	if best.ActionText:find("Coin") then AS.revTries[best] = 99; status("[Revive] нужен кит, а не монеты — пропуск"); return true end
+	local kits = 0
+	for _, t in ipairs(player.Backpack:GetChildren()) do if t.Name == "ReviveKit" then kits += 1 end end
+	local gone = function() return not best.Parent or not best.Enabled or not corpse.Parent or not AS.reviveKit() end
+	-- честное удержание (сервер может проверять время), если не вышло — общий usePrompt
+	pcall(function() best:InputHoldBegin(); task.wait(best.HoldDuration + 0.4); best:InputHoldEnd() end)
+	task.wait(0.5)
+	if not gone() then usePrompt(best, gone) end
+	local ok = gone()
+	local name = corpse.Name
+	status(("[Revive] %s: %s (китов было %d)"):format(name, ok and "воскрешён" or "не вышло", kits))
+	return true
+end
+
 -- SAVE GEAR: алтарь в церкви (~50 000 м и ~100 000 м) бесплатно уносит до Limit вещей в лобби и завершает заход.
 -- Только живым через PlayerService.SaveGear; после смерти это покупка за Robux (PromptSaveGearPurchase) — её не трогаем.
 ;(function()
@@ -2646,6 +2744,7 @@ local function autoStep()
 		end
 		Phase = "Мало HP, мобов нет — еду дальше"
 	end
+	if AS.reviveStep() then return end
 	if inDungeon() then return trackedDungeonRun() end
 
 	local drill = getDrill()
