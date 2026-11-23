@@ -29,6 +29,7 @@ local CONFIG = {
 	ItemsMinValue    = 0,
 	IgnoredItems     = { "Rock", "DeathChest" },
 	CorpseSellOnly   = { "Mole Man" }, -- эти трупы только продаём, в топливо никогда
+	BountyOnly       = { "Bandit" }, -- эти трупы обычный стол не берёт (только Bounty-лагерь): для мешка они ничего не стоят
 	-- порядок покупки апгрейдов бура (сначала урон по стенам). Карточки за Robux не покупаются никогда.
 	-- порядок покупки апгрейдов бура (тир-лист): сначала строго по списку,
 	UpgradePriority  = { "RPMOverclock", "DrillPower", "PowerBurst", "HealthRegen", "UltraDrill", "MoneyDrill", "MegaDrill", "PowerSlam" },
@@ -781,6 +782,11 @@ local function invEntries()
 end
 
 -- редкость бережём только у снаряжения: легендарный хлам (Diamond Goblet, 1000) — просто деньги и слот мешка
+-- цена для обычного стола: bounty-трупы (Bandit Miner …) там не продаются — 0
+function DF_value(name, cat, v)
+	if cat == "Corpse" and hasKey(tostring(name or ""), CONFIG.BountyOnly) then return 0 end
+	return v or 0
+end
 function DF_keepItem(rar, cat)
 	return (hasKey(rar, CONFIG.SellKeepRarity) and cat ~= "Scrap") or hasKey(cat, CONFIG.SellKeepCategory)
 end
@@ -1003,7 +1009,7 @@ sellAll = function(sellPart)
 		local before = {}
 		for _, it in ipairs(folder:GetChildren()) do before[it] = true end
 		local list = {}
-		for _, e in ipairs(invEntries()) do if sellable(e) then table.insert(list, e) end end
+		for _, e in ipairs(invEntries()) do if sellable(e) and DF_value(e.Name, e.Category, 1) > 0 then table.insert(list, e) end end -- bounty-трупы стол не берёт
 		for i, e in ipairs(list) do
 			local r = hrp()
 			if r and (r.Position - pos(spot)).Magnitude > 8 then tp(spot, Vector3.new(0, 4, 0)) end
@@ -1661,8 +1667,16 @@ function DF_dropExtraCoal()
 	for _, t in ipairs(fuelTools()) do
 		if t.Name == "Ore_Coal" then
 			for _ = 1, extra do
-				if not t.Parent then break end
-				if t.Parent ~= player.Character then pcall(function() eq:InvokeServer(t) end); task.wait(0.2) end
+				-- Drop бросает то, что в руке: только если в руке точно уголь (иначе летит пропан/бинты)
+				local held = player.Character and player.Character:FindFirstChildOfClass("Tool")
+				if not held or held.Name ~= "Ore_Coal" then
+					local c = player.Backpack:FindFirstChild("Ore_Coal")
+					if not c then break end
+					if held then local un = knit("ToolService", "UnequipTool"); if un then pcall(function() un:InvokeServer() end); task.wait(0.2) end end
+					pcall(function() eq:InvokeServer(c) end)
+					for _ = 1, 10 do task.wait(0.05); held = player.Character and player.Character:FindFirstChildOfClass("Tool"); if held and held.Name == "Ore_Coal" then break end end
+					if not held or held.Name ~= "Ore_Coal" then break end
+				end
 				if pcall(function() drop:InvokeServer() end) then done += 1 end
 				task.wait(0.2)
 			end
@@ -1882,10 +1896,11 @@ local function lootOne(center, radius, fuelOnly)
 	local cheap
 	if full and not fuelOnly then
 		for _, e in ipairs(invEntries()) do
-			if sellable(e) and (not cheap or (e.Value or 0) < (cheap.Value or 0)) then cheap = e end
+			local v = DF_value(e.Name, e.Category, e.Value)
+			if sellable(e) and (not cheap or v < cheap.v) then cheap = e; cheap.v = v end
 		end
 	end
-	local function room(it) return not full or (cheap ~= nil and (it:GetAttribute("Value") or 0) >= math.max(100, (cheap.Value or 0) * 2)) end
+	local function room(it) return not full or (cheap ~= nil and DF_value(it.Name, it:GetAttribute("Category"), it:GetAttribute("Value")) >= math.max(100, cheap.v * 2)) end
 	-- уголь занимает слот мешка за каждую штуку (было 15): больше CoalKeep не копим, пока бак не просел
 	local fuelStocked = DF_coalCount() >= CONFIG.CoalKeep and fuelPct() >= 50
 	local best, bd
@@ -1901,7 +1916,13 @@ local function lootOne(center, radius, fuelOnly)
 			if it:GetAttribute("ItemDatabaseId") == "Money_Sack" then want = not fuelOnly and isMySack(it)
 			-- трупы: топливо (5–10) и товар (гоблин 10, Bandit Miner 380): берём для бака или если дорогие
 			elseif it:GetAttribute("Category") == "Corpse" then
-				want = room(it) and (fuelPct() < 85 or (it:GetAttribute("Value") or 0) >= 50 or hasKey(name, CONFIG.CorpseSellOnly))
+				if hasKey(name, CONFIG.BountyOnly) then
+					-- только за Bounty: берём, лишь пока в мешке много места
+					local bu, bc = bagUsage()
+					want = not fuelOnly and bu and bc and bc - bu >= 8
+				else
+					want = room(it) and (fuelPct() < 85 or (it:GetAttribute("Value") or 0) >= 50 or hasKey(name, CONFIG.CorpseSellOnly))
+				end
 			elseif it:GetAttribute("Class") == "Medkit" then
 				-- аптечки/бинты с земли — только до нормы (иначе выкинутые лишние тут же подбираем обратно)
 				local band = name:find("Bandage") ~= nil
@@ -1912,7 +1933,7 @@ local function lootOne(center, radius, fuelOnly)
 			end
 			if want then
 				-- дорогое — первым (трупы исчезают): чем дороже и ближе, тем раньше
-				local d = dist(it) / (1 + (it:GetAttribute("Value") or 0) / 100)
+				local d = dist(it) / (1 + DF_value(name, it:GetAttribute("Category"), it:GetAttribute("Value")) / 100)
 				if not bd or d < bd then best, bd = it, d end
 			end
 		end
@@ -1934,7 +1955,7 @@ local function lootOne(center, radius, fuelOnly)
 		local drop = knit("CarryInventoryService", "DropGroup")
 		if drop and pcall(function() drop:InvokeServer(cheap.Id) end) then
 			inventory(true)
-			status(("[Loot] мешок полон — выкинул %s (%d) ради %s (%d)"):format(tostring(cheap.DisplayName or cheap.Name), cheap.Value or 0, name, best:GetAttribute("Value") or 0))
+			status(("[Loot] мешок полон — выкинул %s (%d) ради %s (%d)"):format(tostring(cheap.DisplayName or cheap.Name), cheap.v, name, best:GetAttribute("Value") or 0))
 		end
 	end
 	if (pos(best) - (hrp() and hrp().Position or pos(best))).Magnitude < 600 or moveTo(best, collecting) then
@@ -2623,7 +2644,7 @@ local function dungeonRun()
 	-- мешок полон — лут не поднять: выходим продать и возвращаемся (погоня по запомненным воротам)
 	if bagFull() and not DF_dropExtraMed() then
 		local n = 0
-		for _, e in ipairs(invEntries()) do if sellable(e) then n += 1 end end
+		for _, e in ipairs(invEntries()) do if sellable(e) and DF_value(e.Name, e.Category, 1) > 0 then n += 1 end end
 		-- продавать нечего (мешок забит неприкосновенным) — выход ничего не даст
 		if n >= 3 or DF_coalCount() > CONFIG.CoalKeep then
 			DF_bagExit = true
