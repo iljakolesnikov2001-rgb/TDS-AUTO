@@ -1392,8 +1392,10 @@ local function upgradeStep(force)
 			return false
 		end
 	end
+	-- запас на 3 аптечки (100 монет каждая): без них бот минутами ждёт реген в укрытии (24.11: 226 с из 5 мин, монет 5)
+	local reserve = math.max(0, 3 - (DF_medCount and DF_medCount(false) or 3)) * 100
 	for _, o in ipairs(opts) do
-		if type(o) == "table" and o.Type == "Coins" and type(o.Cost) == "number" and o.Cost > 0 and o.Cost <= coins
+		if type(o) == "table" and o.Type == "Coins" and type(o.Cost) == "number" and o.Cost > 0 and o.Cost <= coins - reserve
 			and not table.find(CONFIG.UpgradeNever, o.UpgradeName) then
 			local rank = table.find(CONFIG.UpgradePriority, o.UpgradeName)
 			-- вместимость мешка — первой, пока меньше BagCapTarget (полный мешок = пропущенный лут)
