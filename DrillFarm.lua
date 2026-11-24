@@ -588,6 +588,8 @@ local function findSellParts()
 		return d:IsA("BasePart") and d.Name == "SellPart"
 			and (d:FindFirstAncestor("TradingPost") or d:FindFirstAncestor("Sell_Table")) ~= nil
 			and not d:GetFullName():find("CutScene", 1, true)
+			-- стол в лагере Ozy (BountyCamp) — только для bounty-трупов (DF_bountyStep), за обычный лут денег нет
+			and not d:FindFirstAncestor("BountyCamp")
 	end)
 end
 local function nearestSellPart()
@@ -1821,6 +1823,8 @@ function DF_dropTool(name, n)
 			pcall(function() eq:InvokeServer(t) end)
 			for _ = 1, 10 do task.wait(0.05); held = player.Character and player.Character:FindFirstChildOfClass("Tool"); if held and held.Name == name then break end end
 			if not held or held.Name ~= name then break end
+			-- сервер видит предмет в руке позже клиента: без паузы первый бросок пропадал (n угля → (n−1)×25 топлива)
+			task.wait(0.3)
 		end
 		if pcall(function() drop:InvokeServer() end) then done += 1 end
 		task.wait(0.2)
