@@ -527,11 +527,12 @@ end
 local function equipPickaxe()
 	return equipBest(function(t) return hasKey(t.Name, { CONFIG.PickaxeName }) and (t:GetAttribute("Damage") or 1) end)
 end
--- оружие для монстров: ближний бой с наибольшим уроном (меч бьёт в 5 раз сильнее кирки)
+-- оружие для монстров: лучший удар ближнего боя, кирки тоже (Phoenix Pickaxe: урон 75 как у Gold Sword,
+-- дальность 17 против 14 и поджог). При равном уроне — дальше бьющая и с поджогом: она же копает, без смены в руке.
 local function equipWeapon()
 	return equipBest(function(t)
-		if t:GetAttribute("ActionType") == "Swing" and not hasKey(t.Name, { CONFIG.PickaxeName }) then
-			return t:GetAttribute("Damage") or 1
+		if t:GetAttribute("ActionType") == "Swing" then
+			return (t:GetAttribute("Damage") or 1) + (t:GetAttribute("Range") or 0) * 0.1 + (t:GetAttribute("BurnDuration") and 5 or 0)
 		end
 	end) or equipPickaxe()
 end
@@ -694,11 +695,17 @@ local function farmStep(target)
 	if not moveTo(ore, function() return farming() end, stand) then return end
 	local tool = equipPickaxe()
 	local start, oreCheck = os.clock(), os.clock()
+	-- сколько ударов нужно по здоровью жилы (уголь 25 HP, кирка 75 — 1 удар); дольше +2 с — удары не проходят, бросаем
+	local dmg = tool and tool.GetAttribute and tool:GetAttribute("Damage")
+	local need = dmg and dmg > 0 and math.ceil((node:GetAttribute("MaxHealth") or 0) / dmg) * math.max(1, tool:GetAttribute("AttackSpeed") or 1) + 2
 	while farming() and oreAlive(node) do
+		if need and os.clock() - start > need then break end
 		-- выпавшую руду подбираем сразу, а не после того как жила кончится (иначе она пропадает/её уносит)
 		if os.clock() - oreCheck > 0.5 and pickupOresNear then oreCheck = os.clock(); pickupOresNear(p, 25, true) end
 		if CONFIG.MaxTimePerOre > 0 and os.clock() - start > CONFIG.MaxTimePerOre then break end
-		if Selling then task.wait(0.3) continue end -- убийство монстров / продажа заняли персонажа
+		if Selling then task.wait(0.3); start = start + 0.3; continue end -- убийство монстров / продажа заняли персонажа
+		-- после боя в руке меч: удар «киркой» не проходит (отсюда «не добил за 8 с») — берём кирку снова
+		if not holds(gameTool(), tool) then tool = equipPickaxe() or tool end
 		r = hrp()
 		if r then
 			r.CFrame = CFrame.lookAt(stand, Vector3.new(p.X, stand.Y, p.Z))
@@ -1618,6 +1625,8 @@ local function hordeKill(m, center)
 		local stand = p + Vector3.new(math.cos(dir), 0, math.sin(dir)) * rr
 		r.AssemblyLinearVelocity = Vector3.zero
 		r.CFrame = CFrame.lookAt(stand, Vector3.new(p.X, stand.Y, p.Z))
+		-- оружие выбило из руки (копание/лут взяли кирку) — берём снова, иначе удары впустую
+		if not holds(gameTool(), tool) then tool = weaponFor(m) or tool end
 		swing(tool)
 		if h.Health < hp then hp, last = h.Health, os.clock() end
 		if os.clock() - last > 1.5 then
