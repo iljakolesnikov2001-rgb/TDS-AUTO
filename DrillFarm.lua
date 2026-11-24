@@ -3256,7 +3256,7 @@ local function autoStep()
 				end)
 				return
 			end
-		else
+		elseif #enemies(45, dp) < 4 then -- орда у бура: за руль не садимся (снимает 40% HP за секунду) — ниже логика орды
 			heal(75)
 			Phase = "Подъезжаю к финальной стене"
 			drive()
@@ -3286,6 +3286,12 @@ local function autoStep()
 	if #near >= 4 then
 		if hpPct() < CONFIG.SafeHpPct + 10 and heal(CONFIG.SafeHpPct + 10) then return end
 		if hpPct() >= CONFIG.SafeHpPct + 10 then AS.hordeFight = true end
+		-- аптечек нет — пока орда стоит, зарабатываем на них: продать мешок, купить, сундуки/лут подальше от толпы
+		if not AS.hordeFight and #medkits() == 0 and hpPct() >= 45 and os.clock() > (AS.hordeEcoNext or 0) then
+			AS.hordeEcoNext = os.clock() + 15
+			Phase = ("Орда (%d): зарабатываю на аптечки"):format(#near)
+			if sellStep(dp, true) or shopStep(dp, true) or chestStep(dp, 3000) or lootStep(dp, 3000) then return end
+		end
 		if not AS.hordeFight then Phase = ("Орда (%d): восстанавливаюсь"):format(#near); hide("орда у бура: " .. #near, function() return hpPct() < CONFIG.SafeHpPct + 10 end); return end -- ждём тот же порог, с которого выходим в бой, иначе прыгаем туда-обратно
 		Phase = ("Орда (%d): бью по одному"):format(#near)
 		driveStop()
