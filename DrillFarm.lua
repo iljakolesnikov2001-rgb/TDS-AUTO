@@ -1643,7 +1643,9 @@ local function hordeKill(m, center)
 		local lost, dealt = myHp0 - hpPct(), h0 - h.Health
 		if el > 3 and lost > 10 then
 			local killT = dealt > 0 and h.Health / (dealt / el) or math.huge
-			local dieT = (hpPct() - CONFIG.GuardHpPct) / (lost / el)
+			-- аптечки в бою тоже HP (watchdog лечит <35%): без них Лорд бросался на 2586/3300, догонял и бил всё равно
+			local stock = math.min(150, DF_medCount(false) * 25 + DF_medCount(true) * 8)
+			local dieT = (hpPct() + stock - CONFIG.GuardHpPct) / (lost / el)
 			if killT > dieT then losing = true; break end
 		end
 		-- убегающий (вор) за кадр уходит на несколько st: целимся с упреждением и вплотную
