@@ -3130,6 +3130,14 @@ end
 		return ok2 and res ~= false
 	end
 end)()
+-- уголь у бура, который ещё можно выкопать: пока он есть, копаем весь и заправляемся один раз, а не после каждого куска
+function DF_coalNear(dp)
+	if os.clock() < (AS.coalSkip or 0) or bagFull() then return false end
+	for _, n in ipairs(oreNodes()) do
+		if hasKey(n:GetAttribute("SessionOreType") or "", { "Coal" }) and not n:GetAttribute("_DF_Skip") and (n.Position - dp).Magnitude <= CONFIG.WorkRadius then return true end
+	end
+	return false
+end
 local function autoStep()
 	if not alive() then Phase = "Ждём возрождения"; return end
 	if workspace:GetAttribute("InCutScene") == true then Phase = "Катсцена"; return end
@@ -3330,7 +3338,7 @@ local function autoStep()
 			return
 		end
 	end
-	if os.clock() > refuelNext and ((fp < CONFIG.FuelTargetPct and (#fuelTools() > 0 or #corpses() > 0)) or (fp < 70 and #corpses() >= 3)) then Phase = "Заправка"; refuel(); return end
+	if os.clock() > refuelNext and ((fp < CONFIG.FuelTargetPct and (#fuelTools() > 0 or #corpses() > 0) and not (fp >= 25 and DF_coalNear(dp))) or (fp < 70 and #corpses() >= 3)) then Phase = "Заправка"; refuel(); return end
 	if sellStep(dp) then return end
 	-- ивент Money Fog (Lighting.Event = "MoneyFog"): продажа выгоднее — сбываем всё сразу, на ближайшем столе
 	if game:GetService("Lighting"):GetAttribute("Event") == "MoneyFog" and os.clock() > AS.fogSellNext then
@@ -3362,7 +3370,7 @@ local function autoStep()
 	if chestStep(dp, CONFIG.WorkRadius) then Phase = "Сундуки"; return end
 	if lootStep(dp, CONFIG.WorkRadius) then Phase = "Сбор лута"; return end
 	-- до финальной стены ≤ ~300 м (1 st ≈ 2.5 м) и топлива ≥ 40% — не отходим за топливом, доезжаем (у стены заправка трупами)
-	if fp < CONFIG.FuelTargetPct and #fuelTools() == 0 and not (fp >= 40 and finalWallAhead(dp, 130)) then
+	if fp < CONFIG.FuelTargetPct and (#fuelTools() == 0 or fp >= 25 and DF_coalNear(dp)) and not (fp >= 40 and finalWallAhead(dp, 130)) then
 		if lootStep(dp, CONFIG.FuelSearchRadius, true) then Phase = "Ищу топливо"; return end
 		-- уголь, только что выкопанный вдали от бура, лежит у нас под ногами
 		local me0 = hrp()
@@ -3377,7 +3385,8 @@ local function autoStep()
 		-- полный мешок: уголь не поднять, а farmStep при полном мешке крутит продажу по кругу
 		if hasCoal and (os.clock() < (AS.coalSkip or 0) or bagFull()) then hasCoal = false end
 		if hasCoal then
-			if not AS.coalT0 or fp > AS.coalFp + 1 or os.clock() - (AS.coalLast or 0) > 10 then AS.coalT0, AS.coalFp = os.clock(), fp end
+			local got = fp + #fuelTools() * 10 -- выкопанный уголь в руках — тоже прогресс
+			if not AS.coalT0 or got > AS.coalFp + 1 or os.clock() - (AS.coalLast or 0) > 10 then AS.coalT0, AS.coalFp = os.clock(), got end
 			AS.coalLast = os.clock()
 			if os.clock() - AS.coalT0 > 45 then
 				AS.coalSkip, AS.coalT0 = os.clock() + 180, nil
