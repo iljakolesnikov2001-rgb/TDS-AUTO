@@ -937,7 +937,8 @@ local function oldGear()
 	end
 	for _, src in ipairs({ player:FindFirstChild("Backpack"), player.Character }) do
 		for _, t in ipairs(src and src:GetChildren() or {}) do
-			if t:IsA("Tool") then
+			-- легендарки и выше (Goblin Lord Crown, Phoenix/Void-оружие) игрок сейвит — не продаём
+			if t:IsA("Tool") and not hasKey(tostring(t:GetAttribute("Rarity") or ""), CONFIG.SellKeepRarity) then
 				local cat = t:GetAttribute("Category") or ""
 				if cat == "Melee" then table.insert(melee, t)
 				elseif cat == "Armor" and (plainArmor(t) or worse(t)) or cat:find("Gun") or t:GetAttribute("ActionType") == "Shoot" or cat == "Tool" and t:GetAttribute("Class") ~= "Pickaxe" and t:GetAttribute("ActionType") ~= "Use" then
