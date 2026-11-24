@@ -1111,6 +1111,9 @@ sellAll = function(sellPart)
 	end
 	pcall(sellExtraPickaxes, mine)
 	pcall(sellOldGear, mine)
+	-- выкинутое на продажу лутер не подбирает обратно (упало мимо стола — иначе круг «продал → подобрал»)
+	DF_sold = DF_sold or setmetatable({}, { __mode = "k" })
+	for it in pairs(mine) do DF_sold[it] = true end
 	if next(mine) == nil then
 		status("[Sell] нечего продавать (или не удалось выкинуть — нужен лог SimpleSpy)")
 		return
@@ -1448,6 +1451,8 @@ local lastSurface
 
 -- вор: моб несёт наш лут (внутри модели предмет с ItemDatabaseId) — не атакует, убегает; бить первым
 function DF_isThief(m)
+	-- пленник-компаньон (FriendlyCompanion) держит меч с ItemDatabaseId — это не вор
+	if tostring(m:GetAttribute("NpcFaction") or ""):find("Friendly") then return false end
 	for _, d in ipairs(m:GetChildren()) do
 		if d:GetAttribute("ItemDatabaseId") or d:FindFirstChildWhichIsA("Model") and d:FindFirstChildWhichIsA("Model"):GetAttribute("ItemDatabaseId") then return true end
 	end
@@ -2012,7 +2017,7 @@ local function lootOne(center, radius, fuelOnly)
 		local sid = it:GetAttribute("SessionSnapshotItemId")
 		-- AdventureQuestProtected (напр. труп босса Simon) поднять нельзя; неудачи помним по ID — объект пересоздаётся
 		if p and (p - center).Magnitude <= radius and (skipUntil[it] or 0) < os.clock() and (dungeonActive or not inZone(p))
-			and not it:GetAttribute("AdventureQuestProtected") and (not sid or (skipIds[sid] or 0) < os.clock()) then
+			and not it:GetAttribute("AdventureQuestProtected") and not (DF_sold and DF_sold[it]) and (not sid or (skipIds[sid] or 0) < os.clock()) then
 			local name = it:GetAttribute("DisplayName") or it.Name
 			local isFuel = it:GetAttribute("Category") == "Fuel" or it:GetAttribute("Category") == "Corpse"
 			local want
