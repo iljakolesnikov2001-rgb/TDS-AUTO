@@ -1858,7 +1858,7 @@ function DF_dropExtraMed()
 	return false
 end
 local healNext = 0
-local function heal(belowPct)
+local function healRaw(belowPct)
 	if os.clock() < healNext or hpPct() >= belowPct then return false end
 	local h = hum()
 	for _, t in ipairs(medkits()) do
@@ -1898,6 +1898,23 @@ local function heal(belowPct)
 	end
 	return false
 end
+-- лечение из основного цикла и из сторожа ниже — не одновременно
+local function heal(belowPct)
+	if DF_healing then return false end
+	DF_healing = true
+	local ok, res = pcall(healRaw, belowPct)
+	DF_healing = false
+	return ok and res
+end
+-- сторож лечения: основной цикл может застрять в шаге (лут/езда), а яд Blinker снял 317 → 12 HP за 16 с
+-- без единой аптечки при двух в сумке. Лечимся отдельно от цикла, как и аварийный выход.
+task.spawn(function()
+	while Running do
+		task.wait(0.25)
+		local h = hum()
+		if State.Auto and h and h.Health > 0 and hpPct() < 35 and #medkits() > 0 then heal(60) end
+	end
+end)
 
 -- Мало HP: слезаем с бура, улетаем в безопасную точку под землёй и ждём, пока HP восстановится
 -- Есть ли смысл сидеть в укрытии: мобы у бура/рядом, яд, или HP совсем мало. Иначе HP восстанавливается
