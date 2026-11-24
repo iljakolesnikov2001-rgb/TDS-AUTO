@@ -1672,7 +1672,7 @@ local function hordeKill(m, center)
 	if fallback and m.Parent and h.Health > 0 and hpPct() >= CONFIG.GuardHpPct then return DF_killClose(m) end
 	local dead = not m.Parent or h.Health <= 0
 	if dead then Stats.kills += 1 elseif losing then killSkip[m] = os.clock() + 30 elseif not surrounded and h.Health >= h0 then killSkip[m] = os.clock() + 10 end -- урон шёл (бросили из-за HP/времени) — не прячем моба из списка врагов
-	status(("[Horde] %s: %s за %.1fс (дистанция %d)%s%s"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0, range,
+	status(("[Horde] %s: %s за %.1fс (дистанция %d, %s)%s%s"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0, range, tool and tool.Name or "?",
 		dead and "" or (" ост. %d/%d HP"):format(math.floor(h.Health), math.floor(h.MaxHealth)),
 		surrounded and " — окружили, отхожу" or losing and " — бой невыгоден, бросаю" or ""))
 end
