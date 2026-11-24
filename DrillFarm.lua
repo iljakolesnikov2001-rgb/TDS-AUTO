@@ -3080,6 +3080,10 @@ end
 	AS.saveStep = function(dp)
 		if not CONFIG.SaveGearOnStall or State.NoDrive then return false end
 		-- бур едет, ломает стену (за 10 мин были удары) или стоит без топлива — не застрял, завершать забег нельзя
+		-- орда у бура, которую бот выбивает (число мобов падает), — тоже не застревание (24.11: сейв на 8-й минуте боя, −25 RP)
+		local horde = #enemies(45, dp)
+		if horde >= 4 and horde < (AS.stallHorde or math.huge) then AS.stallHorde = horde; AS.stallX, AS.stallAt = dp.X, os.clock(); return false end
+		if horde < 4 then AS.stallHorde = nil end
 		if not AS.stallX or math.abs(dp.X - AS.stallX) > 60 or os.clock() - AS.wallHitAt < 600 or fuelPct() < 5 then AS.stallX, AS.stallAt = dp.X, os.clock(); return false end
 		if os.clock() - AS.stallAt < CONFIG.SaveGearStallMin * 60 or os.clock() < (AS.saveNext or 0) then return false end
 		AS.saveNext = os.clock() + 120
