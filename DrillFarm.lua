@@ -1578,13 +1578,17 @@ local function hordeKill(m, center)
 	if not (h and tool) then return end
 	-- у каждого оружия своя дальность (атрибут Range); встаём чуть ближе предела
 	local range = math.max(5, (tool:GetAttribute("Range") or 12) + 1) -- +3 из swing, минус запас 2
+	-- низкие мобы (мелкие пауки): с полной дальности удар проходит над ними — сразу ближе
+	local okS, sz = pcall(m.GetExtentsSize, m)
+	if okS and sz and sz.Y < 3 then range = math.min(range, 8) end
 	local t0, hp, last = os.clock(), h.Health, os.clock()
 	local fallback, surrounded = false, false
 	local others, othersAt, dir, dirScore = {}, 0, nil, -1
 	local myHp0, losing = hpPct(), false
+	local h0, tf = h.Health, os.clock() -- для прогноза боя (сбрасываются при смене цели)
 	Moving = true
 	local maxT = DF_isThief(m) and 40 or 15 -- вора догоняем дольше: с ним наш лут
-	while Running and (State.KillAura or busy()) and m.Parent and h.Health > 0 and os.clock() - t0 < maxT and hpPct() >= CONFIG.GuardHpPct do
+	while Running and (State.KillAura or busy()) and m.Parent and h.Health > 0 and (os.clock() - t0 < maxT or os.clock() - last < 2 and os.clock() - t0 < 60) and hpPct() >= CONFIG.GuardHpPct do -- босса (много HP) бьём, пока урон идёт
 		local r, p = hrp(), pos(m)
 		if not (r and p) then break end
 		if os.clock() - othersAt > 0.25 then
@@ -1594,6 +1598,7 @@ local function hordeKill(m, center)
 			local h1 = c1 and c1 ~= m and dist(c1) < 8 and dist(m) > dist(c1) + 3 and c1:FindFirstChildOfClass("Humanoid")
 			if h1 then
 				m, h, hp, last, dir = c1, h1, h1.Health, os.clock(), nil
+				h0, tf, myHp0 = h1.Health, os.clock(), hpPct()
 				p = pos(m)
 				if not p then break end
 			end
@@ -1615,7 +1620,15 @@ local function hordeKill(m, center)
 			if bestS < 6 and hpPct() < CONFIG.SafeHpPct then surrounded = true; break end
 		end
 		-- бой невыгоден (Mole Man снял 2/3 HP и почти цел): потеряли >25% HP, а у цели >40% — бросаем на 30 с
-		if myHp0 - hpPct() > 25 and h.Health > h.MaxHealth * 0.4 then losing = true; break end
+		-- бой невыгоден: по текущему темпу он убьёт нас (до порога укрытия) раньше, чем мы его.
+		-- Раньше бросали при −25% HP, если у цели >40% — и Goblin Lord (лут на прокачку) не добивался никогда
+		local el = os.clock() - tf
+		local lost, dealt = myHp0 - hpPct(), h0 - h.Health
+		if el > 3 and lost > 10 then
+			local killT = dealt > 0 and h.Health / (dealt / el) or math.huge
+			local dieT = (hpPct() - CONFIG.GuardHpPct) / (lost / el)
+			if killT > dieT then losing = true; break end
+		end
 		-- убегающий (вор) за кадр уходит на несколько st: целимся с упреждением и вплотную
 		local root = m.PrimaryPart or m:FindFirstChild("HumanoidRootPart")
 		local v = root and root.AssemblyLinearVelocity or Vector3.zero
@@ -1629,17 +1642,18 @@ local function hordeKill(m, center)
 		if not holds(gameTool(), tool) then tool = weaponFor(m) or tool end
 		swing(tool)
 		if h.Health < hp then hp, last = h.Health, os.clock() end
-		if os.clock() - last > 1.5 then
+		if os.clock() - last > 1.0 then
 			if range <= 5 then fallback = true; break end -- с дистанции не бьётся (паук низкий и т.п.)
-			range = math.max(5, range - 2); last = os.clock()
+			range = math.max(5, range - 4); last = os.clock()
 		end
 		RunService.Heartbeat:Wait()
 	end
 	Moving = false
 	if fallback and m.Parent and h.Health > 0 and hpPct() >= CONFIG.GuardHpPct then return DF_killClose(m) end
 	local dead = not m.Parent or h.Health <= 0
-	if dead then Stats.kills += 1 elseif losing then killSkip[m] = os.clock() + 30 elseif not surrounded then killSkip[m] = os.clock() + 10 end
-	status(("[Horde] %s: %s за %.1fс (дистанция %d)%s"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0, range,
+	if dead then Stats.kills += 1 elseif losing then killSkip[m] = os.clock() + 30 elseif not surrounded and h.Health >= h0 then killSkip[m] = os.clock() + 10 end -- урон шёл (бросили из-за HP/времени) — не прячем моба из списка врагов
+	status(("[Horde] %s: %s за %.1fс (дистанция %d)%s%s"):format(m.Name, dead and "убит" or "не убил", os.clock() - t0, range,
+		dead and "" or (" ост. %d/%d HP"):format(math.floor(h.Health), math.floor(h.MaxHealth)),
 		surrounded and " — окружили, отхожу" or losing and " — бой невыгоден, бросаю" or ""))
 end
 
@@ -2028,7 +2042,10 @@ local function lootOne(center, radius, fuelOnly)
 		local p = pos(it)
 		local sid = it:GetAttribute("SessionSnapshotItemId")
 		-- AdventureQuestProtected (напр. труп босса Simon) поднять нельзя; неудачи помним по ID — объект пересоздаётся
-		if p and (p - center).Magnitude <= radius and (skipUntil[it] or 0) < os.clock() and (dungeonActive or not inZone(p))
+		-- дорогое (труп босса Goblin Lord 1500) берём и из зоны пройденного данжа; DF_lootMin — режим «только дорогое»
+		local val = it:GetAttribute("Value") or 0
+		if p and (p - center).Magnitude <= radius and (skipUntil[it] or 0) < os.clock() and (dungeonActive or val >= 300 or not inZone(p))
+			and (not DF_lootMin or val >= DF_lootMin)
 			and not it:GetAttribute("AdventureQuestProtected") and not (DF_sold and DF_sold[it]) and (not sid or (skipIds[sid] or 0) < os.clock()) then
 			local name = it:GetAttribute("DisplayName") or it.Name
 			local isFuel = it:GetAttribute("Category") == "Fuel" or it:GetAttribute("Category") == "Corpse"
@@ -2280,7 +2297,8 @@ end
 gearGain = function(it)
 	local cat, dmg = it:GetAttribute("Category"), it:GetAttribute("Damage") or 0
 	if cat == "Melee" and it:GetAttribute("ActionType") == "Swing" then
-		local have = bestOwned(function(t) return t:GetAttribute("Category") == "Melee" end)
+		-- сравниваем со всем оружием ближнего боя, кирками тоже (Phoenix 75): меч слабее не нужен
+		local have = bestOwned(function(t) return t:GetAttribute("ActionType") == "Swing" end)
 		return dmg > have and (dmg - have) / math.max(have, 1) or nil
 	elseif cat == "Pickaxe" then
 		local have = bestOwned(function(t) return t:GetAttribute("Class") == "Pickaxe" or t.Name:find("Pickaxe") ~= nil end)
@@ -3413,6 +3431,11 @@ local function autoStep()
 
 	if chestStep(dp, CONFIG.WorkRadius) then Phase = "Сундуки"; return end
 	if lootStep(dp, CONFIG.WorkRadius) then Phase = "Сбор лута"; return end
+	-- дорогой лут (трупы боссов, эпики) дальше рабочего радиуса — за ним летим отдельно, остальное там не трогаем
+	DF_lootMin = 300
+	local okR, rich = pcall(lootStep, dp, 1500) -- pcall: при ошибке DF_lootMin не должен залипнуть
+	DF_lootMin = nil
+	if okR and rich then Phase = "Дорогой лут"; return end
 	-- до финальной стены ≤ ~300 м (1 st ≈ 2.5 м) и топлива ≥ 40% — не отходим за топливом, доезжаем (у стены заправка трупами)
 	if fp < CONFIG.FuelTargetPct and (#fuelTools() == 0 or fp >= 25 and DF_coalNear(dp)) and not (fp >= 40 and finalWallAhead(dp, 130)) then
 		if lootStep(dp, CONFIG.FuelSearchRadius, true) then Phase = "Ищу топливо"; return end
