@@ -1126,6 +1126,8 @@ sellAll = function(sellPart)
 			if isMySack(it) then any = true; if grabSack(it) then got += 1 end end
 		end
 		if got > 0 and not any then break end
+		-- нас бьют у стола — не стоим: мешок останется на земле, его подберёт лутер (isMySack)
+		if DF_enemies and #DF_enemies(10) > 0 then break end -- enemies объявлен ниже — через глобал
 		-- монеты уже пришли без мешка (бывает): не стоим 12 с впустую
 		if not any and os.clock() - t0 > 2 then
 			local c = DF_call("CurrencyService", "GetCurrency")
@@ -1477,6 +1479,7 @@ enemies = function(radius, center)
 	table.sort(out, function(a, b) if thief[a] ~= thief[b] then return thief[a] end return dist(a) < dist(b) end)
 	return out
 end
+DF_enemies = enemies
 -- Fuel Leech, присосавшийся к буру (Humanoid нет — в enemies не попадает). Глобал: лимит локалов.
 function leechOnDrill()
 	local d, folder = getDrill(), workspace:FindFirstChild("Npc")
@@ -2105,7 +2108,8 @@ local function smeltStep()
 	local camp = workspace:FindFirstChild("FurnaceCampsite")
 	local list = {}
 	for _, e in ipairs(invEntries()) do if smeltOres[e.Name] then table.insert(list, e) end end
-	if not camp or #list == 0 then return false end
+	-- по одной руде не носим (каждый заход — до 25 с ожидания); после неудачи (0 слитков) — пауза 5 мин
+	if not camp or #list < 3 or os.clock() < (DF_smeltNext or 0) then return false end
 	local drop = knit("CarryInventoryService", "DropGroup")
 	if not drop then return false end
 	Phase = ("Переплавка руды (%d)"):format(#list)
@@ -2153,6 +2157,7 @@ local function smeltStep()
 		if n >= #list then break end
 		task.wait(0.5)
 	until os.clock() - t0 > 25 or not busy()
+	if bars == 0 then DF_smeltNext = os.clock() + 300 end
 	status(("[Smelt] переплавлено: %d руды → %d слитков"):format(#list, bars))
 	return true
 end
@@ -3371,8 +3376,9 @@ local function autoStep()
 	if sellStep(dp) then return end
 	-- ивент Money Fog (Lighting.Event = "MoneyFog"): продажа выгоднее — сбываем всё сразу, на ближайшем столе
 	if game:GetService("Lighting"):GetAttribute("Event") == "MoneyFog" and os.clock() > AS.fogSellNext then
-		if (bagUsage() or 0) > 0 then
-			AS.fogSellNext = os.clock() + 20
+		-- только если с прошлой продажи прибавилось (уголь/аптечки остаются в сумке — иначе ездили продавать их каждые 20 с)
+		if (bagUsage() or 0) > (DF_sellLeft or 0) + 2 then
+			AS.fogSellNext = os.clock() + 45
 			status("[Sell] Money Fog — продаю всё")
 			if sellStep(dp, true) then return end
 		end
