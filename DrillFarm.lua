@@ -3008,9 +3008,10 @@ AS.bandageRun = function(dp, force)
 	for _, fo in ipairs(forts) do
 		local d = flat(fo.pos, dp)
 		-- только пройденные крепости (впереди бура — сплошной камень)
-		if fo.pos.X <= dp.X + 50 and d <= ((force or n < 5) and CONFIG.BandageRunDist or 1500) and os.clock() - (AS.shopAt[fo.name] or -1e9) > CONFIG.ShopRestock
+		if fo.pos.X <= dp.X + 50 and d <= ((force or DF_medCount(false) == 0 and n < 2) and CONFIG.BandageRunDist or 1500) and os.clock() - (AS.shopAt[fo.name] or -1e9) > CONFIG.ShopRestock
 			and (not bd or d < bd) then best, bd = fo, d end
 	end
+	-- далеко (до 6000 st) — только когда лечиться совсем нечем; с аптечками в запасе — лишь ближние крепости
 	if not best then return false end
 	AS.shopAt[best.name] = os.clock()
 	status(("[Shop] за бинтами: %s (%d st, бинтов %d)"):format(best.name, bd, n))
