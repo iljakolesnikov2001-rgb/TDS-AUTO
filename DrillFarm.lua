@@ -1872,7 +1872,7 @@ local function hide(why, keep)
 	pcall(function()
 		if not spot then return end
 		local t0, lastHp, lastCheck = os.clock(), hpPct(), os.clock()
-		while Running and (busy() or State.KillAura) and alive() and ((hpPct() < CONFIG.SafeHpPct and dangerNear()) or (keep and keep())) and os.clock() - t0 < 90
+		while Running and (busy() or State.KillAura) and alive() and ((hpPct() < CONFIG.SafeHpPct and dangerNear()) or (keep and keep())) and (os.clock() - t0 < 90 or dangerNear() and hpPct() < CONFIG.SafeHpPct and os.clock() - t0 < 600)
 			and not (hpPct() >= 35 and leechOnDrill()) -- пиявка сосёт топливо — выходим её бить
 			and not (fuelPct() < 5 and #fuelTools() > 0 and #enemies(15, pos(getDrill()) or r.Position) == 0) do -- пустой бак: заправить
 			r = hrp()
@@ -3781,7 +3781,8 @@ task.spawn(function()
 		task.wait(5)
 		for name, at in pairs(loopAt) do
 			-- у сторожа свой поток: шаги с долгим ожиданием (паучья яма 40 с, укрытие 90 с) не трогаем
-			if os.clock() - at > 120 or (os.clock() - at > 30 and hpPct() < CONFIG.GuardHpPct and not Hiding) then
+			-- укрытие крутится покадрово и может длиться до 10 мин (орда у бура) — это не зависание
+			if not Hiding and (os.clock() - at > 120 or (os.clock() - at > 30 and hpPct() < CONFIG.GuardHpPct)) then
 				local co = loopCo[name]
 				status(("[Watchdog] %s завис на %.0f с, HP %.0f%%: %s"):format(name, os.clock() - at, hpPct(),
 					(co and debug.traceback(co) or "?"):gsub("%s+", " "):sub(1, 400)))
