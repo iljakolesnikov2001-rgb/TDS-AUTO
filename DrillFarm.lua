@@ -3741,7 +3741,8 @@ local function startLoop(name, fn)
 		while Running do
 			if State[name] and not Selling then
 				loopAt[name] = os.clock()
-				local ok, err = pcall(fn)
+				-- DF_hangTest = "Auto" (через мост) — один шаг нарочно виснет: проверка сторожа
+				local ok, err = pcall(DF_hangTest == name and function() DF_hangTest = nil; task.wait(1e6) end or fn)
 				loopAt[name] = nil
 				if not ok then status("[Ошибка] " .. name .. ": " .. tostring(err)); task.wait(1) end
 			end
