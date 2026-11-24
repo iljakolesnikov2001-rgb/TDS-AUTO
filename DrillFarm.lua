@@ -1341,8 +1341,30 @@ local function refuel()
 	local tools = fuelTools()
 	table.sort(tools, function(a, b) return (a:GetAttribute("Fuel") or 0) < (b:GetAttribute("Fuel") or 0) end)
 	Moving = true -- ноклип: стоим прямо внутри топливного отсека, чтобы предмет в руке его касался
+	-- предмет кидаем ПЕРЕД печкой (снаружи бура): брошенный внутрь отсека отлетает и не засчитывается
+	local function front()
+		local r = hrp()
+		if r then r.AssemblyLinearVelocity = Vector3.zero; r.CFrame = d:GetPivot() * CFrame.new(0, -1, 21) end
+	end
+	-- уголь: бросаем перед печью сколько нужно до полного бака (проверено: 2 шт. за 1 с), а не по одному
+	-- изнутри отсека (до 2.4 с на штуку, персонаж прыгал внутрь печи и обратно)
+	local coalN = DF_coalCount()
+	if coalN > 0 and fuelPct() < 95 then
+		local per = 25
+		for _, t in ipairs(tools) do if t.Name == "Ore_Coal" then per = t:GetAttribute("Fuel") or per end end
+		local _, cur = fuelPct()
+		local need = math.min(coalN, math.max(1, math.ceil(((d:GetAttribute(CONFIG.MaxFuelAttr) or 0) - cur) / per)))
+		local stop = false
+		task.spawn(function() while not stop do front(); task.wait(0.1) end end)
+		task.wait(0.3)
+		local n = DF_dropTool("Ore_Coal", need)
+		task.wait(1)
+		stop = true
+		if n > 0 then status(("[Fuel] уголь в печь: %d"):format(n)) end
+	end
 	for _, t in ipairs(tools) do
 		if fuelPct() >= 95 then break end
+		if t.Name == "Ore_Coal" then continue end
 		local r = hrp()
 		if not r then break end
 		local _, was = fuelPct()
@@ -1358,11 +1380,6 @@ local function refuel()
 	end
 	local drop = knit("CarryInventoryService", "DropGroup")
 	local burned = 0
-	-- труп кидаем ПЕРЕД печкой (снаружи бура): брошенный внутрь отсека отлетает и не засчитывается
-	local function front()
-		local r = hrp()
-		if r then r.AssemblyLinearVelocity = Vector3.zero; r.CFrame = d:GetPivot() * CFrame.new(0, -1, 21) end
-	end
 	-- трупы подряд (по 0.15 с), потом один раз ждём, пока они упадут в печь
 	for _ = 1, 3 do front(); task.wait(0.1) end
 	for _, e in ipairs(drop and corpses() or {}) do
@@ -2438,17 +2455,22 @@ local function shopStep(center, far)
 		for try = 1, 3 do
 			r = hrp()
 			if not r then return end
-			r.CFrame = CFrame.new(pos(best) + Vector3.new(0, 3, 4)); task.wait(0.4)
+			r.CFrame = CFrame.new(pos(best) + Vector3.new(0, 3, 4)); task.wait(0.2)
 			if req:InvokeServer(best) ~= true then status("[Shop] не взял: " .. name); return end
 			-- держим товар на столе каждый кадр, пока сервер не засчитает (иначе он падает со стола)
+			-- детали товара собираем один раз (раньше GetDescendants каждый кадр — лаги);
+			-- держим, пока касса не показала цену (обычно ~0.3 с), а не фиксированные 1.5 с
+			local parts = {}
+			for _, d in ipairs(best:GetDescendants()) do if d:IsA("BasePart") then table.insert(parts, d) end end
 			local t0 = os.clock()
 			while os.clock() - t0 < 1.5 do
 				r = hrp()
 				if r then r.CFrame = CFrame.new(bp.Position + Vector3.new(0, 2, 6)) end
 				pcall(function()
 					best:PivotTo(top)
-					for _, d in ipairs(best:GetDescendants()) do if d:IsA("BasePart") then d.AssemblyLinearVelocity = Vector3.zero end end
+					for _, d in ipairs(parts) do d.AssemblyLinearVelocity = Vector3.zero end
 				end)
+				if os.clock() - t0 > 0.25 and (bp:GetAttribute("Cost") or 0) > 0 then break end
 				RunService.Heartbeat:Wait()
 			end
 			cancel:InvokeServer(false)
@@ -2475,7 +2497,7 @@ local function shopStep(center, far)
 		end
 		if type(after) ~= "number" or after >= coins then status("[Shop] покупка не прошла: " .. name); return end
 		Stats.bought = (Stats.bought or 0) + 1
-		shopNext = os.clock() + 1 -- купили — сразу смотрим следующий товар
+		shopNext = 0 -- купили — сразу смотрим следующий товар
 		status(("[Shop] куплено: %s за %d монет"):format(name, coins - after))
 		r = hrp()
 		if r then r.CFrame = CFrame.new(pos(best) + Vector3.new(0, 3, 3)) end
