@@ -2462,11 +2462,20 @@ local function gateKey(g)
 	local p = pos(g)
 	return p and (math.floor(p.X / 20) .. ":" .. math.floor(p.Z / 20))
 end
+-- данж тира N бросили 2 захода подряд — все данжи тира ≥ N пропускаем, пока макс. HP не вырастет на 20%
+-- (иначе бот по кругу лезет в слишком сильные данжи и сжигает минуты и сотни монет на аптечки)
+function DF_tooHard(name)
+	local t = tonumber(tostring(name):match("Tier(%d+)"))
+	if not (t and DF_failTier and t >= DF_failTier) then return false end
+	local h = hum()
+	if h and h.MaxHealth >= (DF_failMaxHp or 0) * 1.2 then DF_failTier = nil; status("[Данжи] HP выросло — снова пробую сложные данжи"); return false end
+	return true
+end
 local function gateNear(center)
 	for _, g in ipairs(workspace:GetChildren()) do
 		if g:IsA("Model") and DF_isGate(g) then
 			local p, k = pos(g), gateKey(g)
-			if p and k and not gateDone[k] and flat(p, center) <= CONFIG.GateStopDist then return g, k end
+			if p and k and not gateDone[k] and not DF_tooHard(g.Name) and flat(p, center) <= CONFIG.GateStopDist then return g, k end
 		end
 	end
 end
@@ -3330,7 +3339,7 @@ local function autoStep()
 		AS.chaseNext = os.clock() + 5
 		local r = hrp()
 		local best, bk -- (r and f() обрезал бы второе значение — ключ ворот)
-		if r then best, bk = AS.pickGate(dp, function(gg) return gg.pos.X <= dp.X + 150 and flat(gg.pos, dp) <= CONFIG.DungeonChase end) end
+		if r then best, bk = AS.pickGate(dp, function(gg) return gg.pos.X <= dp.X + 150 and flat(gg.pos, dp) <= CONFIG.DungeonChase and not DF_tooHard(gg.name) end) end
 		if best and bk then
 			status(("[Dungeon] лечу в непройденный данж: %s (%d st от бура)"):format(best.name, flat(best.pos, dp)))
 			driveStop()
@@ -3587,6 +3596,11 @@ trackedDungeonRun = function(accountOnly)
 				if farmTries[k] >= 2 then
 					farmedAt[k] = math.huge
 					status("[Данжи] " .. curGate.Name .. ": 2 захода без полного прохода — пропускаю")
+					local t, h = tonumber(curGate.Name:match("Tier(%d+)")), hum()
+					if t and h and (not DF_failTier or t < DF_failTier) then
+						DF_failTier, DF_failMaxHp = t, h.MaxHealth
+						status(("[Данжи] тир %d+ пока не по силам (макс. HP %d) — пропускаю, пока HP не вырастет на 20%%"):format(t, h.MaxHealth))
+					end
 				else
 					farmedAt[k] = os.clock() + 30
 					gateDone[k] = nil
