@@ -29,6 +29,7 @@ local CONFIG = {
 	ItemsMinValue    = 0,
 	IgnoredItems     = { "Rock", "DeathChest" },
 	CorpseSellOnly   = { "Mole Man" }, -- эти трупы только продаём, в топливо никогда
+	NightHoldX       = 40000, -- дальше этого X ночью бур не водим (мобов много и бьют сильно): данжи, бой, лут, продажа
 	BountyOnly       = { "Bandit" }, -- эти трупы обычный стол не берёт (только Bounty-лагерь): для мешка они ничего не стоят
 	-- порядок покупки апгрейдов бура (сначала урон по стенам). Карточки за Robux не покупаются никогда.
 	-- порядок покупки апгрейдов бура (тир-лист): сначала строго по списку,
@@ -4496,6 +4497,25 @@ task.spawn(function()
 			if (autoBtn.Text:find("ОСТАНОВИТЬ", 1, true) ~= nil) ~= State.Auto then renderAuto() end
 		end)
 		task.wait(0.5)
+	end
+end)
+
+-- Ночь (Lighting.IsDayTime=false) за X ≥ NightHoldX: бур стоит, бот делает всё остальное (режим NoDrive).
+-- Флаг в getgenv — переживает перезагрузку; утром снимаем NoDrive, только если включали его сами.
+task.spawn(function()
+	while Running do
+		task.wait(2)
+		local d = getDrill()
+		local night = game:GetService("Lighting"):GetAttribute("IsDayTime") == false
+		local want = State.Auto and night and d ~= nil and pos(d).X >= CONFIG.NightHoldX
+		if want and not State.NoDrive then
+			State.NoDrive, getgenv().DF_nightNoDrive = true, true
+			pcall(driveStop)
+			status(("[Night] ночь, X=%d — не еду: данжи, бой, лут, продажа"):format(math.floor(pos(d).X)))
+		elseif not want and getgenv().DF_nightNoDrive and (not night or not State.Auto) then
+			State.NoDrive, getgenv().DF_nightNoDrive = false, nil
+			status("[Night] утро — снова еду")
+		end
 	end
 end)
 
