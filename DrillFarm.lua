@@ -916,8 +916,7 @@ local function oldGear()
 		slot = slot == "Head" and "Helmet" or slot
 		local have, a = c and slot and c:GetAttribute(slot), t:GetAttribute("Armor") or 0
 		if type(have) ~= "number" or a > have then return false end
-		-- броня с бонусом к мешку (Hoarder) — не продаём: вместимость важнее брони
-		if tostring(t:GetAttribute("DisplayName") or t.Name):find("Hoarder") then return false end
+		-- Hoarder продаём: у неё только Armor (бонуса к мешку в атрибутах нет), и игрок назвал её хламом
 		for k in pairs(t:GetAttributes()) do if k:find("Capacity") then return false end end
 		-- броня с эффектами (Phoenix, Kings, Champions, короны…: ReplicatedStorage.Shared.ArmorEffects) — не продаём
 		if DF_armorFx == nil then
@@ -1605,8 +1604,10 @@ local function hordeKill(m, center)
 		-- убегающий (вор) за кадр уходит на несколько st: целимся с упреждением и вплотную
 		local root = m.PrimaryPart or m:FindFirstChild("HumanoidRootPart")
 		local v = root and root.AssemblyLinearVelocity or Vector3.zero
-		if v.Magnitude > 8 then p = p + Vector3.new(v.X, 0, v.Z) * 0.15; range = math.min(range, 5) end
-		local stand = p + Vector3.new(math.cos(dir), 0, math.sin(dir)) * range
+		-- только если убегает от нас и только на этот кадр (раньше любой идущий навстречу моб навсегда ставил дистанцию 5)
+		local rr = range
+		if v.Magnitude > 8 and Vector3.new(v.X, 0, v.Z):Dot(p - r.Position) > 0 then p = p + Vector3.new(v.X, 0, v.Z) * 0.15; rr = math.min(range, 5) end
+		local stand = p + Vector3.new(math.cos(dir), 0, math.sin(dir)) * rr
 		r.AssemblyLinearVelocity = Vector3.zero
 		r.CFrame = CFrame.lookAt(stand, Vector3.new(p.X, stand.Y, p.Z))
 		swing(tool)
@@ -2202,6 +2203,8 @@ end
 
 local function sellStep(center, force)
 	local n, cap = bagUsage()
+	-- старая броня/оружие в рюкзаке — продаём, не дожидаясь полной сумки (не чаще раза в 2 мин: вдруг не выкидывается)
+	if not force and os.clock() > (DF_junkNext or 0) and #oldGear() > 0 then DF_junkNext = os.clock() + 120; force = "junk" end
 	if not force and not (n and cap and cap > 0 and n / cap * 100 >= CONFIG.SellAtPct) then return false end
 	if not force and os.clock() < sellNext then return false end
 	-- после продажи в сумке остаётся непродаваемое (топливо, аптечки, редкое) — снова едем, только когда прибавилось
@@ -2210,7 +2213,7 @@ local function sellStep(center, force)
 	local best, bd
 	for _, sp in ipairs(findSellParts()) do
 		local d = flat(sp.Position, center)
-		if (force or d <= CONFIG.WorkRadius) and (not bd or d < bd) then best, bd = sp, d end
+		if (force == true or d <= CONFIG.WorkRadius) and (not bd or d < bd) then best, bd = sp, d end
 	end
 	if not best then return false end
 	pcall(smeltStep) -- руду — в слитки перед продажей (слитки дороже)
