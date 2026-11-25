@@ -2079,6 +2079,8 @@ local function chestInfo(prompt)
 	if npc and prompt:IsDescendantOf(npc) then return nil end -- мимик — монстр, не сундук
 	-- «Buy» = покупка (стенд брони за Robux, магазин) — не сундук
 	if prompt.ActionText == "Buy" or prompt:FindFirstAncestor("ArmorSaleStand") or prompt:FindFirstAncestor("Shop") then return nil end
+	-- дверь клетки SoulPrison (Cell_ChestRoom1 | Open) — не сундук; сундук внутри: Nodes.ChestNode | Interact
+	if prompt.Parent and prompt.Parent.Name:sub(1, 5) == "Cell_" then return nil end
 	local node = prompt
 	local isChest = false
 	for _ = 1, 6 do
