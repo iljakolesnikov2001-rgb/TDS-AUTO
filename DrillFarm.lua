@@ -534,7 +534,9 @@ end
 local function equipWeapon()
 	return equipBest(function(t)
 		if t:GetAttribute("ActionType") == "Swing" then
+			-- меч прокачан (Sharpness — в атрибутах не видно): при равном уроне меч, кирка остаётся копать
 			return (t:GetAttribute("Damage") or 1) + (t:GetAttribute("Range") or 0) * 0.1 + (t:GetAttribute("BurnDuration") and 5 or 0)
+				+ (t:GetAttribute("Class") == "Sword" and 10 or 0)
 		end
 	end) or equipPickaxe()
 end
@@ -804,7 +806,8 @@ function DF_value(name, cat, v)
 	return v or 0
 end
 function DF_keepItem(rar, cat)
-	return (hasKey(rar, CONFIG.SellKeepRarity) and cat ~= "Scrap") or hasKey(cat, CONFIG.SellKeepCategory)
+	-- легендарный труп (Gold Mole Man, 3000) — это деньги, а не снаряжение
+	return (hasKey(rar, CONFIG.SellKeepRarity) and cat ~= "Scrap" and cat ~= "Corpse") or hasKey(cat, CONFIG.SellKeepCategory)
 end
 local function sellable(e)
 	return not DF_keepItem(tostring(e.Rarity or ""), tostring(e.Category or ""))
@@ -1070,7 +1073,9 @@ sellAll = function(sellPart)
 		for _, e in ipairs(invEntries()) do if sellable(e) and DF_value(e.Name, e.Category, 1) > 0 then table.insert(list, e) end end -- bounty-трупы стол не берёт
 		for i, e in ipairs(list) do
 			local r = hrp()
-			if r and (r.Position - pos(spot)).Magnitude > 8 then DF_sellStand(spot) end
+			if r and (r.Position - pos(spot)).Magnitude > 8 then DF_sellStand(spot); r = hrp() end
+			-- унесло от стола (бой, телепорт) — не кидаем: иначе дорогой лут остаётся лежать у бура
+			if not r or (r.Position - pos(spot)).Magnitude > 12 then status("[Sell] не у стола — прервал выброс"); break end
 			pcall(function() dropRf:InvokeServer(e.Id) end)
 			if i % 5 == 0 then task.wait(0.05) end
 		end
@@ -1106,6 +1111,9 @@ sellAll = function(sellPart)
 		if not target then break end
 		local before = {}
 		for _, it in ipairs(folder:GetChildren()) do before[it] = true end
+		DF_sellStand(spot)
+		local r0 = hrp()
+		if not r0 or (r0.Position - pos(spot)).Magnitude > 12 then status("[Sell] не у стола — прервал выброс"); break end
 		if tryDrop(target) then
 			status("[Sell] продаю: " .. tostring(target.DisplayName or target.Name))
 			task.wait(0.2)
@@ -1683,7 +1691,8 @@ local function hordeKill(m, center)
 		if not holds(gameTool(), tool) then tool = weaponFor(m) or tool end
 		swing(tool)
 		if h.Health < hp then hp, last = h.Health, os.clock() end
-		if os.clock() - last > 1.0 then
+		-- медленное оружие (AttackSpeed 2 с) за 1 с просто не успевало ударить — бот шагал к цели вплотную и ловил урон
+		if os.clock() - last > math.max(1.0, (tool and tool:GetAttribute("AttackSpeed") or 0) + 0.4) then
 			if range <= 5 then fallback = true; break end -- с дистанции не бьётся (паук низкий и т.п.)
 			range = math.max(5, range - 4); last = os.clock()
 		end
@@ -2267,18 +2276,23 @@ DF_bountyStep = function(center)
 	local pads = findAll(function(d)
 		return d:IsA("BasePart") and d.Name == "BountySellHitBox" and not d:GetFullName():find("CutScene", 1, true)
 	end)
+	-- выброс всех трупов ради проверки метки стоит ~15 с; не принесло монет — следующая попытка через 5 мин
+	if os.clock() < (DF_bountyNext or 0) then return false end
+	local list, held = {}, DF_bountyHeld or 0
+	for _, e in ipairs(invEntries()) do
+		if e.Category == "Corpse" then
+			table.insert(list, e)
+			if DF_value(e.Name, "Corpse", 1) == 0 then held += 1 end -- стол их не берёт (считаем заново: после перезагрузки DF_bountyHeld = 0)
+		end
+	end
+	if #list == 0 then return false end
 	local pad, bd
 	for _, p in ipairs(pads) do
 		local d = flat(p.Position, center)
-		-- лагерь Ozy далеко: летим туда, только когда на столе уже нашлись bounty-трупы
-		if (d <= CONFIG.WorkRadius or (DF_bountyHeld or 0) >= 3) and (not bd or d < bd) then pad, bd = p, d end
+		-- лагерь Ozy далеко: летим туда, только когда набралось хотя бы 3 трупа, которые берёт лишь Ozy
+		if (d <= CONFIG.WorkRadius or held >= 3) and (not bd or d < bd) then pad, bd = p, d end
 	end
 	if not pad then return false end
-	-- выброс всех трупов ради проверки метки стоит ~15 с; не принесло монет — следующая попытка через 5 мин
-	if os.clock() < (DF_bountyNext or 0) then return false end
-	local list = {}
-	for _, e in ipairs(invEntries()) do if e.Category == "Corpse" and not hasKey(tostring(e.Rarity or ""), CONFIG.SellKeepRarity) then table.insert(list, e) end end
-	if #list == 0 then return false end
 	local folder, dropRf = workspace:FindFirstChild("Items"), knit("CarryInventoryService", "DropGroup")
 	if not (folder and dropRf) then return false end
 	Phase = "Продажа bounty"
@@ -2759,15 +2773,23 @@ end
 local pitStep, pitRun
 ;(function() -- своя функция: у Luau лимит 200 локальных на функцию
 local pitTried = {}
+-- Goblin Ring (арена Goblin Lord) входит так же — через QueueSpot, промпт Enter у ворот выключен
+local function pitId(m)
+	return m:GetAttribute("SpiderPitId") or (m:FindFirstChild("QueueSpot") and m:GetAttribute("SessionDungeonId"))
+end
+local function pitDone(m)
+	local w = m:FindFirstChild("Wave")
+	return m:GetAttribute("SpiderPitCompleted") == true or (w ~= nil and w:GetAttribute("WaveCompleted") == true)
+end
 local function pitGatePos(m)
-	local g = m:FindFirstChild("SpiderGate")
+	local g = m:FindFirstChild("SpiderGate") or m:FindFirstChild("QueueSpot")
 	return g and pos(g)
 end
 local function pitsNear(dp, radius)
 	local out = {}
 	for _, m in ipairs(workspace:GetChildren()) do
-		local id = m:GetAttribute("SpiderPitId")
-		local gp = id and m:GetAttribute("SpiderPitCompleted") ~= true and pitGatePos(m)
+		local id = pitId(m)
+		local gp = id and not pitDone(m) and pitGatePos(m)
 		if gp and flat(gp, dp) <= radius and (pitTried[id] or 0) < os.clock() then table.insert(out, m) end
 	end
 	return out
@@ -2776,7 +2798,7 @@ pitStep = function(dp, radius)
 	if hpPct() < CONFIG.SafeHpPct then return false end
 	local pit = pitsNear(dp, radius or 400)[1]
 	if not pit then return false end
-	local id, gp = pit:GetAttribute("SpiderPitId"), pitGatePos(pit)
+	local id, gp = pitId(pit), pitGatePos(pit)
 	pitTried[id] = os.clock() + 60 -- не пустили — повторим через минуту
 	driveStop()
 	Phase = "Паучья яма: встаю в очередь"
@@ -2810,7 +2832,7 @@ pitStep = function(dp, radius)
 			dungeonStart, dungeonIdle = os.clock(), os.clock()
 			table.clear(killSkip)
 			Stats.dungeons += 1
-			status("[Pit] вошёл в паучью яму (сложность " .. tostring(pit:GetAttribute("Difficulty")) .. ")")
+			status("[Pit] вошёл: " .. pit.Name .. " (сложность " .. tostring(pit:GetAttribute("Difficulty")) .. ")")
 			return true
 		end
 		local st = spot:GetAttribute("QueueState")
@@ -2843,20 +2865,21 @@ pitRun = function()
 	-- сундуки и лут (после последней волны)
 	if chestStep(r.Position, 600) then Phase = "Паучья яма: сундуки"; dungeonIdle = os.clock(); return end
 	if lootStep(r.Position, 400) then dungeonIdle = os.clock(); return end
-	if pit:GetAttribute("SpiderPitCompleted") == true then
+	if pitDone(pit) then
 		if os.clock() - dungeonIdle > 6 then
-			pitTried[pit:GetAttribute("SpiderPitId") or ""] = math.huge
+			pitTried[pitId(pit) or ""] = math.huge
 			exitDungeon("паучья яма пройдена")
 		end
 		return
 	end
 	-- волны идут по таймеру: ждём; совсем долго ничего не происходит — выходим
 	-- CurrentWave так и не появился — волны не начались (все 3 входа в логе так висели по минуте): ждём 15 с, не 60
-	local noWave = pit:GetAttribute("CurrentWave") == nil and os.clock() - dungeonStart > 15
+	local w = pit:FindFirstChild("Wave")
+	local noWave = pit:GetAttribute("CurrentWave") == nil and not (w and w:GetAttribute("WaveActive")) and os.clock() - dungeonStart > 15
 	if noWave or os.clock() - dungeonIdle > 60 or os.clock() - dungeonStart > 900 then
 		-- волна может зависнуть (Enemy=0, волна не идёт), а Exit во время волн выключен — улетаем к буру сами
 		if not exitDungeon("в яме ничего не происходит") then
-			pitTried[pit:GetAttribute("SpiderPitId") or ""] = math.huge
+			pitTried[pitId(pit) or ""] = math.huge
 			dungeonActive, curPit = false, nil
 			local d = getDrill()
 			if d then tpToDrill(d) end
@@ -3432,6 +3455,11 @@ local function autoStep()
 	if #near == 0 and hpPct() >= CONFIG.GuardHpPct then
 		local mine = enemies(20)
 		if #mine > 0 then Phase = "Бой рядом со мной"; driveStop(); killOne(mine[1]); return end
+		-- бьют издалека (Blinker и др. стрелки с 50–60 st), а не яд/туман — идём убивать, а не копаем под обстрелом
+		if #mine == 0 and os.clock() - lastHitAt < 4 and not poisoned() then
+			local far = enemies(100)
+			if #far > 0 then Phase = "Бой: стреляет издалека " .. far[1].Name; driveStop(); killOne(far[1]); return end
+		end
 	end
 	if #near > 0 then
 		-- сидеть за рулём под ударами нельзя: либо бой (HP хватает), либо укрытие
@@ -4545,7 +4573,7 @@ task.spawn(function()
 			State.NoDrive, getgenv().DF_nightNoDrive = true, true
 			pcall(driveStop)
 			status(("[Night] ночь, %d м — не еду: данжи, бой, лут, продажа"):format(math.floor(DF_depthM())))
-		elseif not want and getgenv().DF_nightNoDrive and (not night or not State.Auto) then
+		elseif not want and getgenv().DF_nightNoDrive and not night then
 			State.NoDrive, getgenv().DF_nightNoDrive = false, nil
 			status("[Night] утро — снова еду")
 		end
