@@ -3813,6 +3813,11 @@ local function autoStep()
 		end
 	end
 	-- за 1000 м бур уходит на ~340 st: собираем шире рабочего радиуса
+	-- пачка с полным мешком ничего не соберёт (25.11: «не влез» и сразу «собрал») — сначала продаём
+	if DF_collecting and bagFull() and os.clock() > (DF_collectSellAt or 0) then
+		DF_collectSellAt = os.clock() + 60
+		if sellStep(dp, true) then return end
+	end
 	if DF_collecting and lootStep(dp, CONFIG.WorkRadius + 300) then Phase = "Сбор лута (пачка)"; return end
 	-- дорогой лут (трупы боссов, эпики) дальше рабочего радиуса — за ним летим отдельно, остальное там не трогаем
 	DF_lootMin = 300
