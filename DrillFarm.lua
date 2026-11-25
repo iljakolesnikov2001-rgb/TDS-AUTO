@@ -2643,6 +2643,7 @@ local function shopStep(center, far)
 		if type(quote) ~= "number" or quote <= 0 or quote > cost or quote > coins then
 			status(("[Shop] касса: %s (ждали %s) — не покупаю"):format(tostring(quote), tostring(cost))); return
 		end
+		if DF_saving then return end -- SaveGear уже ушёл: инвентарь пуст, bestOwned=0 — купили бы Gold Sword (25.11, −600)
 		buy:InvokeServer(bp)
 		-- ждём списания монет, а не фиксированную секунду
 		local after
@@ -2715,8 +2716,8 @@ local function enterGate(g, key)
 	if gateTries[key] >= 3 then gateDone[key] = true end
 	driveStop()
 	local gp = pos(g)
-	if not clearAround(gp, 40) then gateDone[key] = true; return end
-	if dist(g) > 40 and not moveTo(g, collecting) then return end
+	if not clearAround(gp, 40) then gateDone[key] = true; status("[Dungeon] у ворот не зачистил мобов: " .. g.Name); return end
+	if dist(g) > 40 and not moveTo(g, collecting) then status("[Dungeon] не долетел до ворот: " .. g.Name); return end
 	pcall(function() player:RequestStreamAroundAsync(gp, 5) end)
 	local pr
 	for _ = 1, 20 do
@@ -3369,6 +3370,7 @@ end
 		local hh = hum()
 		-- мёртвым SaveGear платный (Robux) — никогда
 		if not hh or hh.Health <= 0 then status("[Save] персонаж мёртв — сохранение пропущено"); return false end
+		DF_saving = true -- после SaveGear сервер кидает в лобби; до тех пор — никаких покупок
 		if not direct then driveStop() end -- direct = аварийный/быстрый сейв: ни одного лишнего запроса до SaveGear
 		local r = hrp()
 		if not r then return false end
@@ -3576,6 +3578,8 @@ local function autoStep()
 				local okB, rB = pcall(AS.bandageRun, cp, true)
 				status(("[Heal] аптечек нет — магазин: %s/%s, бинты: %s/%s"):format(tostring(okS), tostring(rS), tostring(okB), tostring(rB)))
 				if (okS and rS) or (okB and rB) then return end
+				-- магазины ещё не пополнились (restock 300 с): не вылезаем из укрытия к мобам каждые 45 с впустую
+				AS.gateShopNext = os.clock() + 120; DF_medShopNext = AS.gateShopNext
 			end
 		end
 		if dangerNear() then
@@ -4056,14 +4060,20 @@ local function farmGate(best, bk, r)
 		if g then break end
 		task.wait(0.25)
 	end
-	if not g then farmFails[bk] = (farmFails[bk] or 0) + 1; farmedAt[bk] = os.clock() + 30; return end
+	if not g then
+		farmFails[bk] = (farmFails[bk] or 0) + 1; farmedAt[bk] = os.clock() + 30
+		status(("[Данжи] %s: ворота не прогрузились (попытка %d)"):format(best.name, farmFails[bk]))
+		return
+	end
 	local wv = g:FindFirstChild("Wave")
 	if wv and wv:GetAttribute("WaveCompleted") == true and #idleChests(g) == 0 then
 		farmedAt[bk] = math.huge
 		status("[Данжи] уже пройден: " .. g.Name)
 		return
 	end
-	if chestStep(best.pos, 150) then return end -- сундуки у входа
+	-- сундуки у входа; не больше 3 раз, иначе неоткрывающийся сундук держит бота в цикле перелётов
+	DF_gateChest = DF_gateChest or {}
+	if (DF_gateChest[bk] or 0) < 3 and chestStep(best.pos, 150) then DF_gateChest[bk] = (DF_gateChest[bk] or 0) + 1; return end
 	gateDone[bk], gateTries[bk] = nil, 0
 	enterGate(g, bk)
 	if not inDungeon() then
