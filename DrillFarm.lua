@@ -834,8 +834,10 @@ local function tryDrop(e)
 end
 
 -- Кирки в хотбаре: оставляем одну лучшую (по Damage, затем Value), остальные выкидываем на стол
+-- сначала редкость: Phoenix (Legendary, 75 + поджог) лучше Void (Epic, 100) — по одному Damage продавали Phoenix
+local RAR = { Common = 1, Uncommon = 2, Rare = 3, Epic = 4, Legendary = 5, Mythic = 6, Exotic = 7, Secret = 8, Divine = 9 }
 local function toolScore(t)
-	return (t:GetAttribute("Damage") or 0) * 100000 + (t:GetAttribute("Value") or t:GetAttribute("Cost") or 0)
+	return (RAR[t:GetAttribute("Rarity") or ""] or 0) * 1e9 + (t:GetAttribute("Damage") or 0) * 100000 + (t:GetAttribute("Value") or t:GetAttribute("Cost") or 0)
 end
 local function myPickaxes()
 	local out = {}
