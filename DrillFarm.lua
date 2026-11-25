@@ -1635,18 +1635,14 @@ local function hordeKill(m, center)
 	local h0, tf = h.Health, os.clock() -- для прогноза боя (сбрасываются при смене цели)
 	Moving = true
 	-- босс: замах (неповторяющаяся анимация атаки) → удар по земле по радиусу — отходим на 30 st, пока она играет
-	local dodgeUntil, dodgeCon = 0, nil
+	-- Goblin Champion: трек «Animation» 3.8 с, удар на 2.7 с (лог BossHit) — отходим до конца трека.
+	-- Опрашиваем треки каждый кадр (AnimationPlayed у босса не срабатывал); короткие (<2 с, реакция на удар) не считаем
+	local dodgeUntil, bossAnims = 0, nil
 	local function watchBoss(mm, hh)
-		if dodgeCon then dodgeCon:Disconnect(); dodgeCon = nil end
-		local an = hh.MaxHealth >= 3000 and hh:FindFirstChildOfClass("Animator")
-		if not an then return end
-		dodgeCon = an.AnimationPlayed:Connect(function(tr)
-			local nm = (tr.Name or ""):lower()
-			if tr.Looped or nm:find("walk") or nm:find("idle") or nm:find("run") or nm:find("hit") or nm:find("hurt") or nm:find("stun") then return end
-			dodgeUntil = os.clock() + math.clamp(tr.Length > 0 and tr.Length or 1.5, 0.8, 2.5)
-			DF_dodgeSeen = DF_dodgeSeen or {}
-			if not DF_dodgeSeen[tr.Name] then DF_dodgeSeen[tr.Name] = true; status(("[Boss] %s: замах %s (%.1fс) — отхожу"):format(mm.Name, tr.Name, tr.Length)) end
-		end)
+		bossAnims = nil
+		if hh.MaxHealth < 3000 then return end
+		bossAnims = {}
+		for _, d in ipairs(mm:GetDescendants()) do if d:IsA("Animator") then table.insert(bossAnims, d) end end
 	end
 	watchBoss(m, h)
 	local maxT = DF_isThief(m) and 40 or 15 -- вора догоняем дольше: с ним наш лут
@@ -1687,7 +1683,7 @@ local function hordeKill(m, center)
 		-- Раньше бросали при −25% HP, если у цели >40% — и Goblin Lord (лут на прокачку) не добивался никогда
 		local el = os.clock() - tf
 		local lost, dealt = myHp0 - hpPct(), h0 - h.Health
-		if el > 3 and lost > 10 then
+		if el > 3 and lost > 10 and os.clock() - (DF_pitFightAt or 0) > 3 then -- в яме босса добиваем (игрок: «данж надо дофармливать»)
 			local killT = dealt > 0 and h.Health / (dealt / el) or math.huge
 			-- аптечки в бою тоже HP (watchdog лечит <35%): без них Лорд бросался на 2586/3300, догонял и бил всё равно
 			local stock = math.min(150, DF_medCount(false) * 25 + DF_medCount(true) * 8)
@@ -1700,6 +1696,17 @@ local function hordeKill(m, center)
 		-- только если убегает от нас и только на этот кадр (раньше любой идущий навстречу моб навсегда ставил дистанцию 5)
 		local rr = range
 		if v.Magnitude > 8 and Vector3.new(v.X, 0, v.Z):Dot(p - r.Position) > 0 then p = p + Vector3.new(v.X, 0, v.Z) * 0.15; rr = math.min(range, 5) end
+		for _, an in ipairs(bossAnims or {}) do
+			for _, tr in ipairs(an:GetPlayingAnimationTracks()) do
+				if not tr.Looped and tr.Length >= 2 and tr.TimePosition < tr.Length - 0.2 then
+					local u = os.clock() + (tr.Length - tr.TimePosition) + 0.3
+					if u > dodgeUntil then
+						if os.clock() >= dodgeUntil then status(("[Boss] %s: замах (%s %.1fс) — отхожу"):format(m.Name, tr.Name, tr.Length - tr.TimePosition)) end
+						dodgeUntil = u
+					end
+				end
+			end
+		end
 		local dodging = os.clock() < dodgeUntil
 		if dodging then rr = 30; last = os.clock() end -- отход — не «не бьётся», дистанцию не уменьшаем
 		local stand = p + Vector3.new(math.cos(dir), 0, math.sin(dir)) * rr
@@ -1718,7 +1725,6 @@ local function hordeKill(m, center)
 		RunService.Heartbeat:Wait()
 	end
 	Moving = false
-	if dodgeCon then dodgeCon:Disconnect() end
 	if fallback and m.Parent and h.Health > 0 and hpPct() >= CONFIG.GuardHpPct then return DF_killClose(m) end
 	local dead = not m.Parent or h.Health <= 0
 	if dead then Stats.kills += 1 elseif losing then killSkip[m] = os.clock() + 30 elseif not surrounded and h.Health >= h0 then killSkip[m] = os.clock() + 10 end -- урон шёл (бросили из-за HP/времени) — не прячем моба из списка врагов
@@ -1785,6 +1791,21 @@ task.spawn(function()
 							if d and d < 300 and (not bd or d < bd) then best, bd = m, d end
 						end
 						if best then table.insert(near, "дальний: " .. best.Name .. "@" .. math.floor(bd)) end
+					end
+					-- сильный удар — пишем, что играет у ближайшего босса (для уклонения от замаха)
+					if last - v >= 150 then
+						for _, m in ipairs(enemies(60)) do
+							local bh = m:FindFirstChildOfClass("Humanoid")
+							if bh and bh.MaxHealth >= 3000 then
+								local tr, at = {}, {}
+								for _, an in ipairs(m:GetDescendants()) do
+									if an:IsA("Animator") then for _, t in ipairs(an:GetPlayingAnimationTracks()) do table.insert(tr, t.Name .. (t.Looped and "~" or "") .. ("@%.1f/%.1f"):format(t.TimePosition, t.Length)) end end
+								end
+								for k, x in pairs(m:GetAttributes()) do if type(x) ~= "table" then table.insert(at, k .. "=" .. tostring(x)) end end
+								status("[BossHit] " .. m.Name .. " anim: " .. table.concat(tr, ",") .. " | " .. table.concat(at, ","))
+								break
+							end
+						end
 					end
 					local c = player.Character
 					status(("[DMG] -%.0f → %.0f%s%s %s"):format(last - v, v,
@@ -2154,8 +2175,9 @@ local function lootOne(center, radius, fuelOnly)
 			-- трупы: топливо (5–10) и товар (гоблин 10, Bandit Miner 380): берём для бака или если дорогие
 			elseif it:GetAttribute("Category") == "Corpse" then
 				if hasKey(name, CONFIG.BountyOnly) then
-					-- бандитов стол не берёт — не подбираем (игрок: «бандитов просто выкидываем»); с наградой — к Ozy
-					want = not fuelOnly and it:GetAttribute("HasBounty") == true
+					-- бандиты — bounty-трупы (300–480 у Ozy): не выкидываем, берём, пока в мешке есть место
+					local bu, bc = bagUsage()
+					want = not fuelOnly and bu and bc and bc - bu >= 3
 				else
 					want = room(it) and (fuelPct() < 85 or (it:GetAttribute("Value") or 0) >= 50 or hasKey(name, CONFIG.CorpseSellOnly))
 				end
@@ -2361,15 +2383,7 @@ local function sellStep(center, force)
 	end
 	if not best then return false end
 	pcall(smeltStep) -- руду — в слитки перед продажей (слитки дороже)
-	-- бандиты без награды в мешке — просто выкидываем (стол их не берёт, место занимают)
-	local dropG = knit("CarryInventoryService", "DropGroup")
-	for _, e in ipairs(dropG and invEntries() or {}) do
-		local nm = tostring(e.Name or "")
-		if e.Category == "Corpse" and hasKey(nm, CONFIG.BountyOnly) and not (DF_bountyNames or {})[nm] then
-			pcall(function() dropG:InvokeServer(e.Id) end)
-			status("[Sell] выкинул бандита: " .. nm)
-		end
-	end
+
 	pcall(DF_bountyStep, center)
 	Phase = "Продажа"
 	driveStop()
@@ -2884,10 +2898,16 @@ end
 pitRun = function()
 	local pit = curPit
 	Phase = ("Паучья яма: волна %s/%s"):format(tostring(pit:GetAttribute("CurrentWave")), tostring(pit:GetAttribute("MaxWave")))
-	if hpPct() < 60 and #enemies(60) > 0 then exitDungeon("мало HP"); return end
+	if hpPct() < 60 and #enemies(60) > 0 then
+		if heal(80) then return end
+		if hpPct() < 35 then exitDungeon("мало HP, аптечек нет"); return end
+	end
 	local list = enemies(400)
 	if #list > 0 then
+		DF_pitFightAt = os.clock()
+		killSkip[list[1]] = nil
 		killOne(list[1])
+		DF_pitFightAt = os.clock()
 		dungeonIdle = os.clock()
 		return
 	end
@@ -2907,7 +2927,7 @@ pitRun = function()
 	-- CurrentWave так и не появился — волны не начались (все 3 входа в логе так висели по минуте): ждём 15 с, не 60
 	local w = pit:FindFirstChild("Wave")
 	local noWave = pit:GetAttribute("CurrentWave") == nil and not (w and w:GetAttribute("WaveActive")) and os.clock() - dungeonStart > 15
-	if noWave or os.clock() - dungeonIdle > 60 or os.clock() - dungeonStart > 900 then
+	if noWave or os.clock() - dungeonIdle > 60 or os.clock() - dungeonStart > 1800 then
 		-- волна может зависнуть (Enemy=0, волна не идёт), а Exit во время волн выключен — улетаем к буру сами
 		if not exitDungeon("в яме ничего не происходит") then
 			pitTried[pitId(pit) or ""] = math.huge
