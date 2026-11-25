@@ -2866,7 +2866,7 @@ local function pitsNear(dp, radius)
 	for _, m in ipairs(workspace:GetChildren()) do
 		local id = pitId(m)
 		local gp = id and not pitDone(m) and pitGatePos(m)
-		if gp and flat(gp, dp) <= radius and (pitTried[id] or 0) < os.clock() and not DF_isT5(m) then table.insert(out, m) end
+		if gp and flat(gp, dp) <= radius and (pitTried[id] or 0) < os.clock() and not DF_isT5(m) and m.Name ~= "SpiderPit" then table.insert(out, m) end -- пауков (SpiderPit) больше не фармим
 	end
 	return out
 end
