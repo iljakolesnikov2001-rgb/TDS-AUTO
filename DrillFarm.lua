@@ -2849,7 +2849,9 @@ pitRun = function()
 		return
 	end
 	-- волны идут по таймеру: ждём; совсем долго ничего не происходит — выходим
-	if os.clock() - dungeonIdle > 60 or os.clock() - dungeonStart > 900 then
+	-- CurrentWave так и не появился — волны не начались (все 3 входа в логе так висели по минуте): ждём 15 с, не 60
+	local noWave = pit:GetAttribute("CurrentWave") == nil and os.clock() - dungeonStart > 15
+	if noWave or os.clock() - dungeonIdle > 60 or os.clock() - dungeonStart > 900 then
 		-- волна может зависнуть (Enemy=0, волна не идёт), а Exit во время волн выключен — улетаем к буру сами
 		if not exitDungeon("в яме ничего не происходит") then
 			pitTried[pit:GetAttribute("SpiderPitId") or ""] = math.huge
