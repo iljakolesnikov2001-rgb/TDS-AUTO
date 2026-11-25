@@ -3456,7 +3456,9 @@ local function autoStep()
 		local mine = enemies(20)
 		if #mine > 0 then Phase = "Бой рядом со мной"; driveStop(); killOne(mine[1]); return end
 		-- бьют издалека (Blinker и др. стрелки с 50–60 st), а не яд/туман — идём убивать, а не копаем под обстрелом
-		if #mine == 0 and os.clock() - lastHitAt < 4 and not poisoned() then
+		-- яд Blinker'а — тоже его удар; исключаем только токсичный туман (там бить некого)
+		local c = player.Character
+		if #mine == 0 and os.clock() - lastHitAt < 4 and not (c and c:GetAttribute("IsToxicFogPoisoned")) then
 			local far = enemies(130)
 			if #far > 0 then Phase = "Бой: стреляет издалека " .. far[1].Name; driveStop(); killOne(far[1]); return end
 		end
