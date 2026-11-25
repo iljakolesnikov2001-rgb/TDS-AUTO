@@ -16,6 +16,7 @@ local CONFIG = {
 	MedkitStock      = 12,    -- держать аптечек в запасе (покупаются в магазине крепости)
 	BandageStock     = 3,     -- бинтов (дешёвые, 10 монет) держать до стольких, сверх MedkitStock
 	ShopRestock      = 300,   -- каждый магазин обновляет товар раз в 5 минут
+	BandageBuyFromX  = 15000, -- бинты не покупаем, пока бур не дальше этого X (рано мобы слабые — монеты на апгрейды)
 	BandageRunDist   = 6000,  -- за бинтами в запомненный магазин летаем не дальше этого от бура
 	SellFarPct       = 85,   -- сумка заполнена на N% — продаём даже на дальнем столе
 	SaveGearOnStall  = true, -- бур не продвигается N минут — уносим лучшее через алтарь Save Gear (бесплатно, конец захода)
@@ -1856,6 +1857,10 @@ function DF_dropExtraCoal()
 	return extra > 0 and DF_dropTool("Ore_Coal", extra) or 0
 end
 -- бинты (слабые) нужны, только пока аптечек меньше нормы; с полным запасом аптечек — 0
+function DF_bandBuyOk()
+	local d = getDrill()
+	return d ~= nil and pos(d).X >= CONFIG.BandageBuyFromX
+end
 function DF_bandStock()
 	return DF_medCount(false) >= CONFIG.MedkitStock and 0 or CONFIG.BandageStock
 end
@@ -2362,7 +2367,7 @@ gearGain = function(it)
 		-- запас аптечек: до MedkitStock штук, выгоднее — больше HP за монету
 		local band = it.Name:find("Bandage") ~= nil
 		if band then
-			if DF_medCount(true) >= DF_bandStock() then return nil end
+			if DF_medCount(true) >= DF_bandStock() or not DF_bandBuyOk() then return nil end
 		elseif DF_medCount(false) >= CONFIG.MedkitStock then return nil end
 		-- дорогие аптечки (Golden за 1000) — только если монет много: апгрейды бура важнее
 		if (it:GetAttribute("Cost") or 0) > math.max(100, shopCoins * 0.15) then return nil end
@@ -3041,7 +3046,7 @@ AS.bandageRun = function(dp, force)
 	AS.bandNext = os.clock() + 20
 	local n = 0
 	n = DF_medCount(true)
-	if n >= DF_bandStock() or (coinsCache2() or 0) < 10 then return false end
+	if n >= DF_bandStock() or (coinsCache2() or 0) < 10 or not DF_bandBuyOk() then return false end
 	local best, bd
 	for _, fo in ipairs(forts) do
 		local d = flat(fo.pos, dp)
