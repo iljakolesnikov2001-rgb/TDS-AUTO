@@ -3314,7 +3314,8 @@ local function autoStep()
 
 	local drill = getDrill()
 	local me = hrp()
-	if me and inZone(me.Position) and drill then
+	-- бур сам проезжает рядом с зоной данжа — тогда мы у бура, телепорт к нему ничего не даёт
+	if me and drill and inZone(me.Position) and flat(me.Position, pos(drill)) > 60 then
 		status("[Auto] оказался в зоне данжа без входа — назад к буру")
 		tpToDrill(drill)
 		return
