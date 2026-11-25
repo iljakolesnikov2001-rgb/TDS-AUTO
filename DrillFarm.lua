@@ -2149,7 +2149,7 @@ end
 local gearGain, wearItem -- ниже (магазин)
 -- данж 5 уровня: Difficulty>=5 или Void-пул (SoulPrison без Difficulty) — туда только рейд
 function DF_isT5(g)
-	return (g:GetAttribute("Difficulty") or 0) >= 5 or tostring(g:GetAttribute("SessionStructurePoolId") or ""):sub(1, 4) == "Void" or g.Name == "SoulPrison"
+	return (g:GetAttribute("Difficulty") or 0) >= 5 or tostring(g:GetAttribute("SessionStructurePoolId") or ""):match("^Void.*Dungeons") ~= nil or g.Name == "SoulPrison"
 end
 -- зоны данжей 5 уровня: туда лезем только рейдом (DF_raiding), лут оттуда в обычном режиме не трогаем
 local t5Zones, t5ScanAt = {}, 0
@@ -2938,6 +2938,29 @@ pitRun = function()
 	-- сундуки и лут (после последней волны)
 	if chestStep(r.Position, 600) then Phase = "Паучья яма: сундуки"; dungeonIdle = os.clock(); return end
 	if lootStep(r.Position, 400) then dungeonIdle = os.clock(); return end
+	-- следующая волна стартует, только когда зайдёшь в следующую локу (Interior.StageN): через тоннель — в центр
+	local cw, mw = pit:GetAttribute("CurrentWave"), pit:GetAttribute("MaxWave")
+	if cw and mw and cw < mw and os.clock() - dungeonIdle > 3 then
+		local imp = pit:FindFirstChild("Interior") and pit.Interior:FindFirstChild("Stage" .. (cw + 1))
+		imp = imp and imp:FindFirstChild("Important")
+		local sum, n, tun, tn = Vector3.zero, 0, Vector3.zero, 0
+		for _, d in ipairs(imp and imp:GetDescendants() or {}) do
+			if d:IsA("BasePart") and d.Name == "BarrierHitbox" then sum += d.Position; n += 1
+			elseif d:IsA("BasePart") and d.Name == "TunnelHitBox" and d.Size.Y < 60 then tun += d.Position; tn += 1 end
+		end
+		if n > 0 then
+			local tp0 = tn > 0 and tun / tn
+			local ctr = Vector3.new(sum.X / n, tp0 and tp0.Y or r.Position.Y, sum.Z / n)
+			if flat(r.Position, ctr) > 40 then
+				Phase = ("Паучья яма: иду в локу %d"):format(cw + 1)
+				status(("[Pit] волна %d/%d зачищена — иду в следующую локу (Stage%d)"):format(cw, mw, cw + 1))
+				if tp0 then moveTo(pit, nil, tp0) end
+				moveTo(pit, nil, ctr)
+				dungeonIdle = os.clock()
+				return
+			end
+		end
+	end
 	if pitDone(pit) then
 		if os.clock() - dungeonIdle > 6 then
 			pitTried[pitId(pit) or ""] = math.huge
@@ -3383,18 +3406,23 @@ function DF_raidStep(dp)
 			local rad = okB and math.max(size.X, size.Z, 400) / 2 + 20 or 220
 			status(("[Raid] %s (сложность %s): залетаю — мобы и сундуки, без входа"):format(g.Name, tostring(g:GetAttribute("Difficulty"))))
 			driveStop()
+			-- издалека данж не прогружен (ни мобов, ни сундуков): сначала долетаем и ждём стриминг
 			pcall(function() player:RequestStreamAroundAsync(c, 5) end)
-			local t0, kills = os.clock(), 0
+			moveTo(g, nil, c + Vector3.new(0, 15, 0))
+			task.wait(2)
+			okB, cf, size = pcall(g.GetBoundingBox, g)
+			if okB and size.Magnitude > 20 then c, rad = cf.Position, math.max(size.X, size.Z, 400) / 2 + 20 end
+			local t0, kills, idleAt = os.clock(), 0, os.clock()
 			DF_raiding = true
 			while Running and State.Auto and os.clock() - t0 < 300 do
 				if hpPct() < 50 and not heal(80) and hpPct() < 35 then status("[Raid] мало HP, аптечек нет — бросаю"); break end
 				local list = enemies(rad, c)
 				if #list > 0 then
 					Phase = ("Рейд %s: бой (%d)"):format(g.Name, #list)
-					killOne(list[1]); kills += 1
-				elseif chestStep(c, rad) then Phase = "Рейд " .. g.Name .. ": сундуки"
-				elseif not lootStep(c, rad) then break end
-				task.wait()
+					killOne(list[1]); kills += 1; idleAt = os.clock()
+				elseif chestStep(c, rad) or lootStep(c, rad) then Phase = "Рейд " .. g.Name .. ": сундуки/лут"; idleAt = os.clock()
+				elseif os.clock() - idleAt > 5 then break end -- chestStep сканирует раз в 1.5с: конец — только после 5с тишины
+				task.wait(0.1)
 			end
 			DF_raiding = false
 			done[id] = true
