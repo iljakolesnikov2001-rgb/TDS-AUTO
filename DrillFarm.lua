@@ -1669,6 +1669,16 @@ local function hordeKill(m, center)
 		if not (r and p) then break end
 		if os.clock() - othersAt > 0.25 then
 			othersAt, others = os.clock(), enemies(40)
+			-- боссы рядом (не только цель): в Goblin Ring бот бьёт мелочь, а Champion в это время замахивается
+			DF_bossNear = {}
+			for _, o in ipairs(enemies(90)) do
+				local oh = o:FindFirstChildOfClass("Humanoid")
+				if oh and oh.MaxHealth >= 3000 then
+					local an = {}
+					for _, d in ipairs(o:GetDescendants()) do if d:IsA("Animator") then table.insert(an, d) end end
+					table.insert(DF_bossNear, { m = o, an = an })
+				end
+			end
 			-- вплотную подошёл другой моб — бьём его, иначе он бьёт нас безнаказанно
 			local c1 = others[1]
 			local h1 = c1 and c1 ~= m and dist(c1) < 8 and dist(m) > dist(c1) + 3 and c1:FindFirstChildOfClass("Humanoid")
@@ -1715,20 +1725,23 @@ local function hordeKill(m, center)
 		local rr = range
 		-- только вор и только когда мы уже рядом: на первом кадре мы далеко, любой идущий моб считался «убегающим» → ТП вплотную на 5 st
 		if DF_isThief(m) and (r.Position - p).Magnitude < range + 6 and v.Magnitude > 8 and Vector3.new(v.X, 0, v.Z):Dot(p - r.Position) > 0 then p = p + Vector3.new(v.X, 0, v.Z) * 0.15; rr = math.min(range, 5) end
-		for _, an in ipairs(bossAnims or {}) do
+		for _, bn in ipairs(DF_bossNear or {}) do
+		local bm = bn.m
+		for _, an in ipairs(bn.an) do
 			for _, tr in ipairs(an:GetPlayingAnimationTracks()) do
 				-- разведка: какие треки играет босс (имя/длина) — чтобы уворачиваться и от обычного удара (Lord бьёт на 23 st каждые 3 с)
 				DF_bossTr = DF_bossTr or {}
-				local tk = m.Name .. "/" .. tr.Name .. "/" .. (tr.Animation and tr.Animation.AnimationId or "?")
+				local tk = bm.Name .. "/" .. tr.Name .. "/" .. (tr.Animation and tr.Animation.AnimationId or "?")
 				if not tr.Looped and not DF_bossTr[tk] then DF_bossTr[tk] = true; status(("[BossAnim] %s %.2fс"):format(tk, tr.Length)) end
 				if not tr.Looped and tr.Length >= 2 and tr.TimePosition < tr.Length - 0.2 then
 					local u = os.clock() + (tr.Length - tr.TimePosition) + 0.3
 					if u > dodgeUntil then
-						if os.clock() >= dodgeUntil then status(("[Boss] %s: замах (%s %.1fс) — отхожу"):format(m.Name, tr.Name, tr.Length - tr.TimePosition)) end
-						dodgeUntil = u
+						if os.clock() >= dodgeUntil then status(("[Boss] %s: замах (%s %.1fс) — отхожу"):format(bm.Name, tr.Name, tr.Length - tr.TimePosition)) end
+						dodgeUntil, DF_dodgeFrom = u, bm
 					end
 				end
 			end
+		end
 		end
 		-- ритмичный удар босса (Lord: −35 ровно каждые 3.0 с на 19–23 st; анимация доходит позже урона — по ней не успеть):
 		-- запоминаем время крупных потерь HP и отходим на [период−0.45 .. период+0.35] после последнего удара
@@ -1748,8 +1761,16 @@ local function hordeKill(m, center)
 			end
 		end
 		local dodging = os.clock() < dodgeUntil
+		if not dodging then DF_dodgeFrom = nil end
 		if dodging then rr = 55; last = os.clock() end -- 30 мало: Champion бил −300 на 30 st во время отхода (лог 25.11 22:13:41) -- отход — не «не бьётся», дистанцию не уменьшаем
 		local stand = p + Vector3.new(math.cos(dir), 0, math.sin(dir)) * rr
+		-- отход от замахивающегося босса (он может быть не целью): 55 st от НЕГО, по линии босс → мы
+		local bp = dodging and DF_dodgeFrom and DF_dodgeFrom.Parent and pos(DF_dodgeFrom)
+		if bp then
+			local away = Vector3.new(r.Position.X - bp.X, 0, r.Position.Z - bp.Z)
+			away = away.Magnitude > 1 and away.Unit or Vector3.new(math.cos(dir), 0, math.sin(dir))
+			stand = Vector3.new(bp.X, stand.Y, bp.Z) + away * 55
+		end
 		r.AssemblyLinearVelocity = Vector3.zero
 		r.CFrame = CFrame.lookAt(stand, Vector3.new(p.X, stand.Y, p.Z))
 		if dodging then RunService.Heartbeat:Wait(); continue end
@@ -2108,6 +2129,38 @@ task.spawn(function()
 		local h = hum()
 		if busy() and not Moving and not Hiding and h and h.Health > 0 and not h.SeatPart
 			and hpPct() >= CONFIG.GuardHpPct and workspace:GetAttribute("InCutScene") ~= true then
+			-- замах босса в 90 st, а мы не в бою (лут/сундук/руда) — отходим на 55 st от него до конца анимации
+			local r = hrp()
+			for _, o in ipairs(r and enemies(90) or {}) do
+				local oh = o:FindFirstChildOfClass("Humanoid")
+				if oh and oh.MaxHealth >= 3000 then
+					local left = 0
+					for _, an in ipairs(o:GetDescendants()) do
+						if an:IsA("Animator") then
+							for _, tr in ipairs(an:GetPlayingAnimationTracks()) do
+								if not tr.Looped and tr.Length >= 2 then left = math.max(left, tr.Length - tr.TimePosition) end
+							end
+						end
+					end
+					local bp = left > 0.2 and pos(o)
+					if bp then
+						status(("[Boss] %s: замах вне боя — отхожу на %.1fс"):format(o.Name, left))
+						DF_guardKill = true
+						local away = Vector3.new(r.Position.X - bp.X, 0, r.Position.Z - bp.Z)
+						away = away.Magnitude > 1 and away.Unit or Vector3.new(1, 0, 0)
+						local t1 = os.clock() + left + 0.3
+						while Running and os.clock() < t1 do
+							local rr, bq = hrp(), pos(o)
+							if not (rr and bq) then break end
+							rr.AssemblyLinearVelocity = Vector3.zero
+							rr.CFrame = CFrame.new(Vector3.new(bq.X, rr.Position.Y, bq.Z) + away * 55)
+							RunService.Heartbeat:Wait()
+						end
+						DF_guardKill = false
+						break
+					end
+				end
+			end
 			local m = enemies(10)[1]
 			if m and not m:GetAttribute("FuelLeechState") then
 				DF_guardKill = true
