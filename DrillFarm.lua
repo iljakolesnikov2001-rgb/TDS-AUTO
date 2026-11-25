@@ -45,6 +45,7 @@ local CONFIG = {
 	OreNames         = {},   -- типы руды (SessionOreType: "Coal", "Iron"...); пусто = любая
 	MaxTimePerOre    = 8,
 	OreSearchRadius  = 150,
+	CollectEveryM    = 1000, -- руду и трупы собираем пачкой раз в столько игровых метров (не выходим ради 1–2 трупов)
 	AutoOreRadius    = 80,   -- авто-фарм: копать руду не дальше этого от бура (0 = не копать)
 	PickaxeName      = "Pickaxe",
 
@@ -1636,7 +1637,11 @@ local function hordeKill(m, center)
 	local range = math.max(5, (tool:GetAttribute("Range") or 12) + 1) -- +3 из swing, минус запас 2
 	-- низкие мобы (мелкие пауки): с полной дальности удар проходит над ними — сразу ближе
 	local okS, sz = pcall(m.GetExtentsSize, m)
-	if okS and sz and sz.Y < 3 then range = math.min(range, 8) end
+	-- низким (пауки) раньше сразу ставили 8 st — и они кусали; с 16 st удар проходит (лог 25.11: Spider за 0.3 с).
+	-- Не проходит — range ниже сам уменьшается на 4 st
+	-- крупные (Goblin Lord, боссы): дальность считается от центра, а модель широкая — с 16 st мы у него в теле.
+	-- Встаём дальше на полширины (до +12); не проходит урон — ниже range и так уменьшается на 4 st
+	if okS and sz and math.max(sz.X, sz.Z) > 8 then range += math.min(12, math.max(sz.X, sz.Z) / 2 - 2) end
 	local t0, hp, last = os.clock(), h.Health, os.clock()
 	local fallback, surrounded = false, false
 	local others, othersAt, dir, dirScore = {}, 0, nil, -1
@@ -3798,9 +3803,20 @@ local function autoStep()
 
 
 	if chestStep(dp, CONFIG.WorkRadius) then Phase = "Сундуки"; return end
-	if lootStep(dp, CONFIG.WorkRadius) then Phase = "Сбор лута"; return end
+	-- сбор пачкой: раз в CollectEveryM м (или мешок/топливо требуют) — всё накопленное позади бура
+	do
+		local d = DF_depthM()
+		if not DF_collectAt or d < DF_collectAt - 500 then DF_collectAt = d end -- новый забег
+		if not DF_collecting and d - DF_collectAt >= CONFIG.CollectEveryM then
+			DF_collecting = true
+			status(("[Collect] проехал %d м — собираю руду и трупы"):format(math.floor(d - DF_collectAt)))
+		end
+	end
+	-- за 1000 м бур уходит на ~340 st: собираем шире рабочего радиуса
+	if DF_collecting and lootStep(dp, CONFIG.WorkRadius + 300) then Phase = "Сбор лута (пачка)"; return end
 	-- дорогой лут (трупы боссов, эпики) дальше рабочего радиуса — за ним летим отдельно, остальное там не трогаем
 	DF_lootMin = 300
+	-- исключение из пачки: монстры дороже 300 — сразу
 	local okR, rich = pcall(lootStep, dp, 1500) -- pcall: при ошибке DF_lootMin не должен залипнуть
 	DF_lootMin = nil
 	if okR and rich then Phase = "Дорогой лут"; return end
@@ -3854,10 +3870,12 @@ local function autoStep()
 		status("[Auto] финальная стена — ломаем (будет волна врагов)")
 	end
 	-- руда у бура: остановиться и выкопать, а не проезжать мимо
-	if not State.NoDrive and CONFIG.AutoOreRadius > 0 and hpPct() >= CONFIG.SafeHpPct and not bagFull() then
-		local node
+	if DF_collecting and not State.NoDrive and CONFIG.AutoOreRadius > 0 and hpPct() >= CONFIG.SafeHpPct and not bagFull() then
+		local node, nd
 		for _, n in ipairs(oreNodes()) do
-			if flat(n.Position, dp) <= CONFIG.AutoOreRadius then node = n; break end
+			local dd = flat(n.Position, dp)
+			-- пачкой: руда позади бура за последние ~1000 м (вперёд — сплошной камень)
+			if dd <= CONFIG.AutoOreRadius + 300 and n.Position.X <= dp.X + 30 and (not nd or dd < nd) then node, nd = n, dd end
 		end
 		if node then
 			Phase = "Копаю руду у бура"
@@ -3871,6 +3889,10 @@ local function autoStep()
 			Mining = false
 			return
 		end
+	end
+	if DF_collecting then
+		DF_collecting, DF_collectAt = false, DF_depthM()
+		status("[Collect] собрал — еду следующие " .. CONFIG.CollectEveryM .. " м")
 	end
 	if State.NoDrive then
 		-- без вождения: бур ведёт кто-то другой — держимся на буре, чтобы не отстать
