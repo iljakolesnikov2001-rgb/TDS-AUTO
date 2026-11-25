@@ -2012,7 +2012,9 @@ task.spawn(function()
 	while Running do
 		task.wait(0.25)
 		local h = hum()
-		if State.Auto and h and h.Health > 0 and hpPct() < 35 and #medkits() > 0 then heal(60) end
+		-- горение (Fire-мутация, за 100 км — у всех мобов): 2% макс. HP/с 8 с, снять нельзя — лечимся на 16% раньше
+		local burn = player.Character and player.Character:GetAttribute("IsOnFire") and 16 or 0
+		if State.Auto and h and h.Health > 0 and hpPct() < 35 + burn and #medkits() > 0 then heal(60 + burn) end
 	end
 end)
 
