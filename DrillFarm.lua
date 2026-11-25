@@ -1442,6 +1442,11 @@ local function upgradeStep(force)
 				if o.UpgradeName == "TeamHealth" then rank -= 0.5 end
 			end
 			rank = rank or 100
+			-- игрок: DrillDefense с 10-го уровня — в самый низ (после всех остальных)
+			if o.UpgradeName == "DrillDefense" then
+				local dd = getDrill()
+				if (dd and tonumber(dd:GetAttribute("DrillDefense")) or 0) >= 10 then rank = 200 end
+			end
 			if not bestRank or rank < bestRank then best, bestRank = o, rank end
 		end
 	end
