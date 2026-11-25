@@ -1634,6 +1634,21 @@ local function hordeKill(m, center)
 	local myHp0, losing = hpPct(), false
 	local h0, tf = h.Health, os.clock() -- для прогноза боя (сбрасываются при смене цели)
 	Moving = true
+	-- босс: замах (неповторяющаяся анимация атаки) → удар по земле по радиусу — отходим на 30 st, пока она играет
+	local dodgeUntil, dodgeCon = 0, nil
+	local function watchBoss(mm, hh)
+		if dodgeCon then dodgeCon:Disconnect(); dodgeCon = nil end
+		local an = hh.MaxHealth >= 3000 and hh:FindFirstChildOfClass("Animator")
+		if not an then return end
+		dodgeCon = an.AnimationPlayed:Connect(function(tr)
+			local nm = (tr.Name or ""):lower()
+			if tr.Looped or nm:find("walk") or nm:find("idle") or nm:find("run") or nm:find("hit") or nm:find("hurt") or nm:find("stun") then return end
+			dodgeUntil = os.clock() + math.clamp(tr.Length > 0 and tr.Length or 1.5, 0.8, 2.5)
+			DF_dodgeSeen = DF_dodgeSeen or {}
+			if not DF_dodgeSeen[tr.Name] then DF_dodgeSeen[tr.Name] = true; status(("[Boss] %s: замах %s (%.1fс) — отхожу"):format(mm.Name, tr.Name, tr.Length)) end
+		end)
+	end
+	watchBoss(m, h)
 	local maxT = DF_isThief(m) and 40 or 15 -- вора догоняем дольше: с ним наш лут
 	while Running and (State.KillAura or busy()) and m.Parent and h.Health > 0 and (os.clock() - t0 < maxT or os.clock() - last < 2 and os.clock() - t0 < 60) and hpPct() >= CONFIG.GuardHpPct do -- босса (много HP) бьём, пока урон идёт
 		local r, p = hrp(), pos(m)
@@ -1646,6 +1661,7 @@ local function hordeKill(m, center)
 			if h1 then
 				m, h, hp, last, dir = c1, h1, h1.Health, os.clock(), nil
 				h0, tf, myHp0 = h1.Health, os.clock(), hpPct()
+				watchBoss(m, h); dodgeUntil = 0
 				p = pos(m)
 				if not p then break end
 			end
@@ -1684,9 +1700,12 @@ local function hordeKill(m, center)
 		-- только если убегает от нас и только на этот кадр (раньше любой идущий навстречу моб навсегда ставил дистанцию 5)
 		local rr = range
 		if v.Magnitude > 8 and Vector3.new(v.X, 0, v.Z):Dot(p - r.Position) > 0 then p = p + Vector3.new(v.X, 0, v.Z) * 0.15; rr = math.min(range, 5) end
+		local dodging = os.clock() < dodgeUntil
+		if dodging then rr = 30; last = os.clock() end -- отход — не «не бьётся», дистанцию не уменьшаем
 		local stand = p + Vector3.new(math.cos(dir), 0, math.sin(dir)) * rr
 		r.AssemblyLinearVelocity = Vector3.zero
 		r.CFrame = CFrame.lookAt(stand, Vector3.new(p.X, stand.Y, p.Z))
+		if dodging then RunService.Heartbeat:Wait(); continue end
 		-- оружие выбило из руки (копание/лут взяли кирку) — берём снова, иначе удары впустую
 		if not holds(gameTool(), tool) then tool = weaponFor(m) or tool end
 		swing(tool)
@@ -1699,6 +1718,7 @@ local function hordeKill(m, center)
 		RunService.Heartbeat:Wait()
 	end
 	Moving = false
+	if dodgeCon then dodgeCon:Disconnect() end
 	if fallback and m.Parent and h.Health > 0 and hpPct() >= CONFIG.GuardHpPct then return DF_killClose(m) end
 	local dead = not m.Parent or h.Health <= 0
 	if dead then Stats.kills += 1 elseif losing then killSkip[m] = os.clock() + 30 elseif not surrounded and h.Health >= h0 then killSkip[m] = os.clock() + 10 end -- урон шёл (бросили из-за HP/времени) — не прячем моба из списка врагов
@@ -2134,9 +2154,8 @@ local function lootOne(center, radius, fuelOnly)
 			-- трупы: топливо (5–10) и товар (гоблин 10, Bandit Miner 380): берём для бака или если дорогие
 			elseif it:GetAttribute("Category") == "Corpse" then
 				if hasKey(name, CONFIG.BountyOnly) then
-					-- только за Bounty: берём, лишь пока в мешке много места
-					local bu, bc = bagUsage()
-					want = not fuelOnly and bu and bc and bc - bu >= 8
+					-- бандитов стол не берёт — не подбираем (игрок: «бандитов просто выкидываем»); с наградой — к Ozy
+					want = not fuelOnly and it:GetAttribute("HasBounty") == true
 				else
 					want = room(it) and (fuelPct() < 85 or (it:GetAttribute("Value") or 0) >= 50 or hasKey(name, CONFIG.CorpseSellOnly))
 				end
@@ -2176,7 +2195,9 @@ local function lootOne(center, radius, fuelOnly)
 		end
 	end
 	if (pos(best) - (hrp() and hrp().Position or pos(best))).Magnitude < 600 or moveTo(best, collecting) then
+		local bty = best:GetAttribute("HasBounty") == true
 		if pickupItem(best) then
+			if bty then DF_bountyNames = DF_bountyNames or {}; DF_bountyNames[name] = true end -- не выкинуть как бандита без награды
 			Stats.items += 1
 			status("[Loot] подобрал: " .. name)
 			task.wait(CONFIG.PickupDelay)
@@ -2330,7 +2351,8 @@ local function sellStep(center, force)
 	if not force and not (n and cap and cap > 0 and n / cap * 100 >= CONFIG.SellAtPct) then return false end
 	if not force and os.clock() < sellNext then return false end
 	-- после продажи в сумке остаётся непродаваемое (топливо, аптечки, редкое) — снова едем, только когда прибавилось
-	if not force and DF_sellLeft and n <= DF_sellLeft + 2 and DF_coalCount() <= CONFIG.CoalKeep then return false end
+	-- ездим, когда прибавилось хотя бы 20% мешка (иначе продавали по 3–6 вещей каждые 30 с); полный мешок — продаём всегда
+	if not force and DF_sellLeft and n < cap and n < DF_sellLeft + math.max(5, cap * 0.2) and DF_coalCount() <= CONFIG.CoalKeep then return false end
 	sellNext = os.clock() + 4
 	local best, bd
 	for _, sp in ipairs(findSellParts()) do
@@ -2339,6 +2361,15 @@ local function sellStep(center, force)
 	end
 	if not best then return false end
 	pcall(smeltStep) -- руду — в слитки перед продажей (слитки дороже)
+	-- бандиты без награды в мешке — просто выкидываем (стол их не берёт, место занимают)
+	local dropG = knit("CarryInventoryService", "DropGroup")
+	for _, e in ipairs(dropG and invEntries() or {}) do
+		local nm = tostring(e.Name or "")
+		if e.Category == "Corpse" and hasKey(nm, CONFIG.BountyOnly) and not (DF_bountyNames or {})[nm] then
+			pcall(function() dropG:InvokeServer(e.Id) end)
+			status("[Sell] выкинул бандита: " .. nm)
+		end
+	end
 	pcall(DF_bountyStep, center)
 	Phase = "Продажа"
 	driveStop()
