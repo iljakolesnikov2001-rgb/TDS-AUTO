@@ -2101,7 +2101,7 @@ local function chestStep(center, radius)
 	local best, bd
 	for _, pr in ipairs(list) do
 		local p = pos(pr.Parent)
-		if p and (p - center).Magnitude <= radius and (dungeonActive or not inZone(p)) then
+		if p and (p - center).Magnitude <= radius and (dungeonActive or not inZone(p)) and not DF_inT5(p) then
 			local d = dist(pr.Parent)
 			if not bd or d < bd then best, bd = pr, d end
 		end
@@ -2147,6 +2147,26 @@ end
 ----------------------------------------------------------------- AUTO FARM
 -- Лут: по одному предмету за шаг (между шагами заново проверяем HP/топливо/монстров)
 local gearGain, wearItem -- ниже (магазин)
+-- данж 5 уровня: Difficulty>=5 или Void-пул (SoulPrison без Difficulty) — туда только рейд
+function DF_isT5(g)
+	return (g:GetAttribute("Difficulty") or 0) >= 5 or tostring(g:GetAttribute("SessionStructurePoolId") or ""):sub(1, 4) == "Void" or g.Name == "SoulPrison"
+end
+-- зоны данжей 5 уровня: туда лезем только рейдом (DF_raiding), лут оттуда в обычном режиме не трогаем
+local t5Zones, t5ScanAt = {}, 0
+function DF_inT5(p)
+	if DF_raiding then return false end
+	if os.clock() - t5ScanAt > 3 then
+		t5ScanAt, t5Zones = os.clock(), {}
+		for _, g in ipairs(workspace:GetChildren()) do
+			if g:IsA("Model") and DF_isT5(g) then
+				local ok, cf, size = pcall(g.GetBoundingBox, g)
+				if ok then table.insert(t5Zones, { cf.Position, math.max(size.X, size.Z, 400) / 2 + 20 }) end
+			end
+		end
+	end
+	for _, z in ipairs(t5Zones) do if flat(p, z[1]) <= z[2] then return true end end
+	return false
+end
 local function lootOne(center, radius, fuelOnly)
 	local full = bagFull()
 	-- мешок полон: дорогую вещь всё равно берём, выкинув самую дешёвую продаваемую (если та вдвое дешевле)
@@ -2167,7 +2187,7 @@ local function lootOne(center, radius, fuelOnly)
 		-- AdventureQuestProtected (напр. труп босса Simon) поднять нельзя; неудачи помним по ID — объект пересоздаётся
 		-- дорогое (труп босса Goblin Lord 1500) берём и из зоны пройденного данжа; DF_lootMin — режим «только дорогое»
 		local val = it:GetAttribute("Value") or 0
-		if p and (p - center).Magnitude <= radius and (skipUntil[it] or 0) < os.clock() and (dungeonActive or val >= 300 or not inZone(p))
+		if p and (p - center).Magnitude <= radius and (skipUntil[it] or 0) < os.clock() and (dungeonActive or val >= 300 or not inZone(p)) and not DF_inT5(p)
 			and (not DF_lootMin or val >= DF_lootMin)
 			and not it:GetAttribute("AdventureQuestProtected") and not (DF_sold and DF_sold[it]) and (not sid or (skipIds[sid] or 0) < os.clock()) then
 			local name = it:GetAttribute("DisplayName") or it.Name
@@ -2653,9 +2673,9 @@ function DF_tooHard(name)
 end
 local function gateNear(center)
 	for _, g in ipairs(workspace:GetChildren()) do
-		if g:IsA("Model") and DF_isGate(g) and (g:GetAttribute("Difficulty") or 0) < 5 then -- 5+ — только рейд (DF_raidStep)
+		if g:IsA("Model") and DF_isGate(g) and not DF_isT5(g) then -- 5+ — только рейд (DF_raidStep)
 			local p, k = pos(g), gateKey(g)
-			if p and k and not gateDone[k] and not DF_tooHard(g.Name) and (g:GetAttribute("Difficulty") or 0) < 5 and flat(p, center) <= CONFIG.GateStopDist then return g, k end
+			if p and k and not gateDone[k] and not DF_tooHard(g.Name) and not DF_isT5(g) and flat(p, center) <= CONFIG.GateStopDist then return g, k end
 		end
 	end
 end
@@ -2722,7 +2742,7 @@ do
 	if r and inZone(r.Position) then
 		local best, bd
 		for _, g in ipairs(workspace:GetChildren()) do
-			if g:IsA("Model") and DF_isGate(g) and (g:GetAttribute("Difficulty") or 0) < 5 then -- 5+ — только рейд (DF_raidStep)
+			if g:IsA("Model") and DF_isGate(g) and not DF_isT5(g) then -- 5+ — только рейд (DF_raidStep)
 				for _, d in ipairs(g:GetDescendants()) do
 					if d:IsA("ProximityPrompt") and d.ActionText == "Exit" then
 						local p = promptPos(d)
@@ -2837,7 +2857,7 @@ local function pitsNear(dp, radius)
 	for _, m in ipairs(workspace:GetChildren()) do
 		local id = pitId(m)
 		local gp = id and not pitDone(m) and pitGatePos(m)
-		if gp and flat(gp, dp) <= radius and (pitTried[id] or 0) < os.clock() and (m:GetAttribute("Difficulty") or 0) < 5 then table.insert(out, m) end
+		if gp and flat(gp, dp) <= radius and (pitTried[id] or 0) < os.clock() and not DF_isT5(m) then table.insert(out, m) end
 	end
 	return out
 end
@@ -3355,16 +3375,17 @@ function DF_raidStep(dp)
 	local done = getgenv().DF_raidDone or {}
 	getgenv().DF_raidDone = done
 	for _, g in ipairs(workspace:GetChildren()) do
-		local id = g:IsA("Model") and (g:GetAttribute("Difficulty") or 0) >= 5 and (g:GetAttribute("SessionStructureId") or g:GetAttribute("SessionDungeonId") or gateKey(g))
+		local id = g:IsA("Model") and DF_isT5(g) and (g:GetAttribute("SessionStructureId") or g:GetAttribute("SessionDungeonId") or gateKey(g))
 		local p = id and not done[id] and pos(g)
 		if p and flat(p, dp) <= CONFIG.DungeonChase and hpPct() >= CONFIG.SafeHpPct then
 			local okB, cf, size = pcall(g.GetBoundingBox, g)
 			local c = okB and cf.Position or p
-			local rad = okB and math.max(size.X, size.Z) / 2 + 20 or 200
+			local rad = okB and math.max(size.X, size.Z, 400) / 2 + 20 or 220
 			status(("[Raid] %s (сложность %s): залетаю — мобы и сундуки, без входа"):format(g.Name, tostring(g:GetAttribute("Difficulty"))))
 			driveStop()
 			pcall(function() player:RequestStreamAroundAsync(c, 5) end)
 			local t0, kills = os.clock(), 0
+			DF_raiding = true
 			while Running and State.Auto and os.clock() - t0 < 300 do
 				if hpPct() < 50 and not heal(80) and hpPct() < 35 then status("[Raid] мало HP, аптечек нет — бросаю"); break end
 				local list = enemies(rad, c)
@@ -3375,6 +3396,7 @@ function DF_raidStep(dp)
 				elseif not lootStep(c, rad) then break end
 				task.wait()
 			end
+			DF_raiding = false
 			done[id] = true
 			local gk = gateKey(g)
 			if gk then gateDone[gk] = true end
@@ -3799,7 +3821,7 @@ if getgenv then getgenv().DF_KnownGates = knownGates end
 local farmedAt, farmFails, farmTries = {}, {}, {}
 local function registerGates()
 	for _, g in ipairs(workspace:GetChildren()) do
-		if g:IsA("Model") and DF_isGate(g) and (g:GetAttribute("Difficulty") or 0) < 5 then -- 5+ — только рейд (DF_raidStep)
+		if g:IsA("Model") and DF_isGate(g) and not DF_isT5(g) then -- 5+ — только рейд (DF_raidStep)
 			local k, p = gateKey(g), pos(g)
 			if k and p and not knownGates[k] then knownGates[k] = { pos = p, name = g.Name } end
 		end
