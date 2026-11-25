@@ -3192,9 +3192,21 @@ AS.bandageRun = function(dp, force)
 		if ok then
 			-- крепость у бура: её кассу shopStep и так проверяет каждые 10 с
 			if flat(p, dp) <= CONFIG.WorkRadius then AS.shopAt[m.Name] = os.clock() end
-			table.insert(forts, { name = m.Name, pos = p })
+			AS.fortKnown = AS.fortKnown or {}
+			AS.fortKnown[m.Name] = p
 		end
 	end
+	-- магазин крепости выгружается стримингом (GeneralStore_Nodes пропадает): летим по запомненной позиции,
+	-- а если её нет (перезапуск) — к самой крепости (кроме Toxic: там магазин — декорация)
+	AS.fortKnown = AS.fortKnown or {}
+	for _, m in ipairs(f:GetChildren()) do
+		if not AS.fortKnown[m.Name] and not m.Name:find("Toxic") then
+			local ok, p = pcall(function() return m:GetPivot().Position end)
+			if ok then AS.fortKnown[m.Name] = p end
+		end
+	end
+	table.clear(forts)
+	for name, p in pairs(AS.fortKnown) do table.insert(forts, { name = name, pos = p }) end
 	if not force and os.clock() < AS.bandNext then return false end
 	AS.bandNext = os.clock() + 20
 	local n = 0
@@ -3560,7 +3572,10 @@ local function autoStep()
 			local cp = (d0 and pos(d0)) or (hrp() and hrp().Position)
 			if cp then
 				pcall(sellStep, cp, true)
-				if shopStep(cp, true) or AS.bandageRun(cp, true) then return end
+				local okS, rS = pcall(shopStep, cp, true)
+				local okB, rB = pcall(AS.bandageRun, cp, true)
+				status(("[Heal] аптечек нет — магазин: %s/%s, бинты: %s/%s"):format(tostring(okS), tostring(rS), tostring(okB), tostring(rB)))
+				if (okS and rS) or (okB and rB) then return end
 			end
 		end
 		if dangerNear() then
