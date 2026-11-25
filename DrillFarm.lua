@@ -852,11 +852,11 @@ local function myPickaxes()
 end
 local function toolGone(t, count)
 	return t.Parent == nil or not (t:IsDescendantOf(player.Backpack) or (player.Character and t:IsDescendantOf(player.Character)))
-		or (t:GetAttribute("Count") or 1) < count
+		or (t:GetAttribute("Count") or t:GetAttribute("MedicalStackCount") or 1) < count
 end
 local function dropTool(t)
 	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-	local count = t:GetAttribute("Count") or 1
+	local count = t:GetAttribute("Count") or t:GetAttribute("MedicalStackCount") or 1 -- стопка (×3): Drop бросает по одному
 	local id = t:GetAttribute("ItemDatabaseId")
 	local drop, dropSpec = knit("ToolService", "Drop"), knit("ToolService", "DropSpecificItem")
 	local eq = knit("ToolService", "EquipTool")
@@ -943,15 +943,21 @@ local function oldGear()
 			-- легендарки и выше (Goblin Lord Crown, Phoenix/Void-оружие) игрок сейвит — не продаём
 			if t:IsA("Tool") and not hasKey(tostring(t:GetAttribute("Rarity") or ""), CONFIG.SellKeepRarity) then
 				local cat = t:GetAttribute("Category") or ""
+				-- одинаковые вещи лежат стопкой (Diamond Sword ×3 = один Tool): каждая лишняя штука — отдельный бросок
+				local stack = math.max(1, t:GetAttribute("MedicalStackCount") or 1)
 				if cat == "Melee" then table.insert(melee, t)
 				elseif cat == "Armor" and (plainArmor(t) or worse(t)) or cat:find("Gun") or t:GetAttribute("ActionType") == "Shoot" or cat == "Tool" and t:GetAttribute("Class") ~= "Pickaxe" and t:GetAttribute("ActionType") ~= "Use" then
-					table.insert(out, t)
+					for _ = 1, stack do table.insert(out, t) end
+				elseif cat == "Armor" then
+					for _ = 2, stack do table.insert(out, t) end -- нужную броню оставляем одну
 				end
 			end
 		end
 	end
 	table.sort(melee, function(a, b) return (a:GetAttribute("Damage") or 0) > (b:GetAttribute("Damage") or 0) end)
-	for i = 2, #melee do table.insert(out, melee[i]) end
+	for i, t in ipairs(melee) do
+		for _ = (i == 1 and 2 or 1), math.max(1, t:GetAttribute("MedicalStackCount") or 1) do table.insert(out, t) end
+	end
 	return out
 end
 local function sellOldGear(mine)
