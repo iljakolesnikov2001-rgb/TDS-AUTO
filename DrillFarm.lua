@@ -3434,6 +3434,16 @@ function DF_raidStep(dp)
 				task.wait(0.1)
 			end
 			DF_raiding = false
+			-- скрипт остановили/перезагрузили посреди рейда — не «забываем», вернёмся
+			if not (Running and State.Auto) then return true end
+			-- какие сундуки остались неоткрытыми и почему (для отладки: замки, рычаги…)
+			local left = {}
+			for _, d in ipairs(g:GetDescendants()) do
+				if d:IsA("ProximityPrompt") and d.Enabled and #left < 6 then
+					table.insert(left, ("%s|%s|chest=%s"):format(d.Parent.Name, d.ActionText, tostring(chestInfo(d))))
+				end
+			end
+			if #left > 0 then status("[Raid] остались промпты: " .. table.concat(left, "; ")) end
 			done[id] = true
 			local gk = gateKey(g)
 			if gk then gateDone[gk] = true end
