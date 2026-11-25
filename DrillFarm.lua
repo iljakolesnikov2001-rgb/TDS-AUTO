@@ -75,6 +75,7 @@ local VIM      = game:GetService("VirtualInputManager")
 local player   = Players.LocalPlayer
 
 local Running = true
+DF_guardKill = false -- глобал от прошлого запуска (перезагрузка посреди боя) иначе навсегда держит tp
 local Selling = false -- пока идёт продажа, остальные функции ждут
 local Connections = {}
 -- новая загрузка скрипта гасит старую копию, даже если та упала с ошибкой и не дошла до shutdown
@@ -170,6 +171,7 @@ local function dist(obj)
 end
 
 local function tp(obj, offset)
+	while DF_guardKill and coroutine.running() ~= DF_guardThread do task.wait(0.05) end -- страж бьёт подошедшего моба
 	local r, p = hrp(), pos(obj)
 	if r and p then r.CFrame = CFrame.new(p + (offset or Vector3.new(0, 3, 0))) end
 end
@@ -177,6 +179,7 @@ end
 -- Плавный перелёт (вместо мгновенного ТП); возвращает false, если прервали
 local Moving = false -- пока скрипт двигает персонажа, включён ноклип
 local function moveTo(obj, stillOk, targetPos)
+	while DF_guardKill and coroutine.running() ~= DF_guardThread do task.wait(0.05) end
 	local r, p = hrp(), pos(obj)
 	if not (r and p) then return false end
 	Moving = true
@@ -1659,6 +1662,7 @@ local function hordeKill(m, center)
 		for _, d in ipairs(mm:GetDescendants()) do if d:IsA("Animator") then table.insert(bossAnims, d) end end
 	end
 	watchBoss(m, h)
+	DF_bhAt, DF_bhPrev, DF_bhPer = nil, nil, nil
 	local maxT = DF_isThief(m) and 40 or 15 -- вора догоняем дольше: с ним наш лут
 	while Running and (State.KillAura or busy()) and m.Parent and h.Health > 0 and (os.clock() - t0 < maxT or os.clock() - last < 2 and os.clock() - t0 < 60) and hpPct() >= CONFIG.GuardHpPct do -- босса (много HP) бьём, пока урон идёт
 		local r, p = hrp(), pos(m)
@@ -1709,7 +1713,8 @@ local function hordeKill(m, center)
 		local v = root and root.AssemblyLinearVelocity or Vector3.zero
 		-- только если убегает от нас и только на этот кадр (раньше любой идущий навстречу моб навсегда ставил дистанцию 5)
 		local rr = range
-		if v.Magnitude > 8 and Vector3.new(v.X, 0, v.Z):Dot(p - r.Position) > 0 then p = p + Vector3.new(v.X, 0, v.Z) * 0.15; rr = math.min(range, 5) end
+		-- только вор и только когда мы уже рядом: на первом кадре мы далеко, любой идущий моб считался «убегающим» → ТП вплотную на 5 st
+		if DF_isThief(m) and (r.Position - p).Magnitude < range + 6 and v.Magnitude > 8 and Vector3.new(v.X, 0, v.Z):Dot(p - r.Position) > 0 then p = p + Vector3.new(v.X, 0, v.Z) * 0.15; rr = math.min(range, 5) end
 		for _, an in ipairs(bossAnims or {}) do
 			for _, tr in ipairs(an:GetPlayingAnimationTracks()) do
 				-- разведка: какие треки играет босс (имя/длина) — чтобы уворачиваться и от обычного удара (Lord бьёт на 23 st каждые 3 с)
@@ -1723,6 +1728,23 @@ local function hordeKill(m, center)
 						dodgeUntil = u
 					end
 				end
+			end
+		end
+		-- ритмичный удар босса (Lord: −35 ровно каждые 3.0 с на 19–23 st; анимация доходит позже урона — по ней не успеть):
+		-- запоминаем время крупных потерь HP и отходим на [период−0.45 .. период+0.35] после последнего удара
+		if bossAnims then
+			local mh = hum()
+			local cur = mh and mh.Health or 0
+			if DF_bhPrev and DF_bhPrev - cur >= 25 then
+				local now = os.clock()
+				if DF_bhAt and now - DF_bhAt > 2 and now - DF_bhAt < 5 then DF_bhPer = now - DF_bhAt end
+				DF_bhAt = now
+			end
+			DF_bhPrev = cur
+			if DF_bhAt and os.clock() - DF_bhAt < 12 then
+				local per = DF_bhPer or 3
+				local ph = (os.clock() - DF_bhAt) % per
+				if ph > per - 0.45 or ph < 0.35 and os.clock() - DF_bhAt > 1 then dodgeUntil = math.max(dodgeUntil, os.clock() + 0.05) end
 			end
 		end
 		local dodging = os.clock() < dodgeUntil
@@ -2076,6 +2098,27 @@ local function hide(why, keep)
 	status(("[Guard] HP %.0f%% — выхожу из укрытия"):format(hpPct()))
 end
 
+-- СТРАЖ ДИСТАНЦИИ (лог 25.11: 118 ударов вплотную @0–5 — все между боями: лут, сундук, руда, лечение, вход в данж).
+-- Основной цикл в это время занят своим делом и моба не видит. Отдельный поток: живой моб в 10 st, а мы не в бою
+-- (Moving) и не за рулём — сразу hordeKill (отходит на дальность оружия). tp/moveTo основного цикла ждут конца.
+task.spawn(function()
+	DF_guardThread = coroutine.running()
+	while Running do
+		task.wait(0.1)
+		local h = hum()
+		if busy() and not Moving and not Hiding and h and h.Health > 0 and not h.SeatPart
+			and hpPct() >= CONFIG.GuardHpPct and workspace:GetAttribute("InCutScene") ~= true then
+			local m = enemies(10)[1]
+			if m and not m:GetAttribute("FuelLeechState") then
+				DF_guardKill = true
+				local ok, err = pcall(hordeKill, m)
+				DF_guardKill = false
+				if not ok then warn("[Guard] " .. tostring(err)) end
+			end
+		end
+	end
+end)
+
 -- Перед сундуком/лутом: убить монстров рядом с целью (если HP позволяет). false — не вышло, цель пропускаем.
 local function clearAround(p, radius)
 	for _ = 1, 8 do
@@ -2369,9 +2412,15 @@ local sellNext = 0
 -- BOUNTY: у Ozy (лагерь охотника в крепостях) трупы мобов с пометкой bounty (HasBounty) продаются дороже.
 -- Выкидываем все трупы на BountySellHitBox; то, что без bounty, подбираем обратно (уйдёт на обычный стол/в печь).
 DF_bountyStep = function(center)
-	local pads = findAll(function(d)
-		return d:IsA("BasePart") and d.Name == "BountySellHitBox" and not d:GetFullName():find("CutScene", 1, true)
-	end)
+	local function findPads()
+		return findAll(function(d)
+			return d:IsA("BasePart") and d.Name == "BountySellHitBox" and not d:GetFullName():find("CutScene", 1, true)
+		end)
+	end
+	local pads = findPads()
+	-- лагерь Ozy обычно в 2000+ st позади бура: модель есть, а детали (квадрат продажи) не прогружены — помним координаты
+	local camp = workspace:FindFirstChild("BountyCamp")
+	if camp then pcall(function() DF_campPos = camp:GetPivot().Position end) end
 	-- выброс всех трупов ради проверки метки стоит ~15 с; не принесло монет — следующая попытка через 5 мин
 	if os.clock() < (DF_bountyNext or 0) then return false end
 	local list, held = {}, DF_bountyHeld or 0
@@ -2388,12 +2437,33 @@ DF_bountyStep = function(center)
 		-- лагерь Ozy далеко: летим туда, только когда набралось хотя бы 3 трупа, которые берёт лишь Ozy
 		if (d <= CONFIG.WorkRadius or held >= 3) and (not bd or d < bd) then pad, bd = p, d end
 	end
+	local ret
+	if not pad and held >= 3 and DF_campPos then
+		-- летим к лагерю и просим сервер прогрузить его (bandit-трупы продаются только у Ozy, ~380 за штуку)
+		local r = hrp()
+		if not r then return false end
+		ret = r.CFrame
+		driveStop()
+		r.AssemblyLinearVelocity = Vector3.zero
+		r.CFrame = CFrame.new(DF_campPos + Vector3.new(0, 6, 0))
+		pcall(function() player:RequestStreamAroundAsync(DF_campPos, 5) end)
+		local t0 = os.clock()
+		repeat task.wait(0.3); pads = findPads() until #pads > 0 or os.clock() - t0 > 8
+		pad = pads[1]
+		if not pad then
+			DF_bountyNext = os.clock() + 300
+			r = hrp(); if r then r.CFrame = ret end
+			status("[Bounty] лагерь Ozy не прогрузился — повтор через 5 мин")
+			return false
+		end
+	end
 	if not pad then return false end
 	local folder, dropRf = workspace:FindFirstChild("Items"), knit("CarryInventoryService", "DropGroup")
 	if not (folder and dropRf) then return false end
 	Phase = "Продажа bounty"
 	driveStop()
-	if not clearAround(pad.Position, 30) then return false end
+	local function goBack() local rr = ret and hrp(); if rr then rr.AssemblyLinearVelocity = Vector3.zero; rr.CFrame = ret end end
+	if not clearAround(pad.Position, 30) then goBack(); return false end
 	local c0 = call("CurrencyService", "GetCurrency")
 	local before = {}
 	for _, it in ipairs(folder:GetChildren()) do before[it] = true end
@@ -2416,6 +2486,7 @@ DF_bountyStep = function(center)
 	if sold > 0 then DF_bountyHeld = 0 end
 	DF_bountyNames = nil -- у Ozy проверили заново: без bounty теперь уйдут на обычный стол
 	status(("[Bounty] выкинул %d трупов, bounty %d, без bounty вернул %d, монеты %s → %s"):format(#list, sold, back, tostring(c0), tostring(c1)))
+	goBack()
 	return true
 end
 
@@ -3903,6 +3974,7 @@ local function autoStep()
 	end
 	if DF_collecting then
 		DF_collecting, DF_collectAt = false, DF_depthM()
+		pcall(DF_bountyStep, dp) -- 3+ bandit-трупа — к Ozy (в т.ч. в далёкий лагерь позади)
 		status("[Collect] собрал — еду следующие " .. CONFIG.CollectEveryM .. " м")
 	end
 	if State.NoDrive then
