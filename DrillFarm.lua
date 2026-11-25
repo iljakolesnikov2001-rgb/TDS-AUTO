@@ -1748,7 +1748,7 @@ local function hordeKill(m, center)
 			end
 		end
 		local dodging = os.clock() < dodgeUntil
-		if dodging then rr = 30; last = os.clock() end -- отход — не «не бьётся», дистанцию не уменьшаем
+		if dodging then rr = 55; last = os.clock() end -- 30 мало: Champion бил −300 на 30 st во время отхода (лог 25.11 22:13:41) -- отход — не «не бьётся», дистанцию не уменьшаем
 		local stand = p + Vector3.new(math.cos(dir), 0, math.sin(dir)) * rr
 		r.AssemblyLinearVelocity = Vector3.zero
 		r.CFrame = CFrame.lookAt(stand, Vector3.new(p.X, stand.Y, p.Z))
