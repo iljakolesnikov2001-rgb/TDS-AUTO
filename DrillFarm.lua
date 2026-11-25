@@ -894,7 +894,7 @@ local function sellExtraPickaxes(mine)
 		local target
 		for i = 2, #list do target = list[i]; break end
 		-- стак одинаковых (×5): если лучшая сама в стаке >1 — продаём лишние из стака
-		if not target and best and (best:GetAttribute("Count") or 1) > 1 then target = best end
+		if not target and best and (best:GetAttribute("MedicalStackCount") or best:GetAttribute("Count") or 1) > 1 then target = best end
 		if not target then return end
 		local before = {}
 		if folder then for _, it in ipairs(folder:GetChildren()) do before[it] = true end end
@@ -3457,7 +3457,7 @@ local function autoStep()
 		if #mine > 0 then Phase = "Бой рядом со мной"; driveStop(); killOne(mine[1]); return end
 		-- бьют издалека (Blinker и др. стрелки с 50–60 st), а не яд/туман — идём убивать, а не копаем под обстрелом
 		if #mine == 0 and os.clock() - lastHitAt < 4 and not poisoned() then
-			local far = enemies(100)
+			local far = enemies(130)
 			if #far > 0 then Phase = "Бой: стреляет издалека " .. far[1].Name; driveStop(); killOne(far[1]); return end
 		end
 	end
