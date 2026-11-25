@@ -2080,7 +2080,10 @@ local function chestInfo(prompt)
 	-- «Buy» = покупка (стенд брони за Robux, магазин) — не сундук
 	if prompt.ActionText == "Buy" or prompt:FindFirstAncestor("ArmorSaleStand") or prompt:FindFirstAncestor("Shop") then return nil end
 	-- дверь клетки SoulPrison (Cell_ChestRoom1 | Open) — не сундук; сундук внутри: Nodes.ChestNode | Interact
-	if prompt.Parent and prompt.Parent.Name:sub(1, 5) == "Cell_" then return nil end
+	if prompt.ActionText ~= "Interact" then
+		local q = prompt.Parent
+		while q and q ~= workspace do if q.Name:sub(1, 5) == "Cell_" then return nil end; q = q.Parent end
+	end
 	local node = prompt
 	local isChest = false
 	for _ = 1, 6 do
@@ -3405,6 +3408,8 @@ function DF_coalNear(dp)
 end
 -- Данж сложности 5+ (игрок: «не входит, а залетает, убивает всех молей, открывает все сундуки и забывает»):
 -- без входа через ворота — телепортом к мобам/сундукам внутри границ постройки; потом помечаем навсегда
+-- Данж 5 уровня (SoulPrison): моли у ворот → вход через Enter → внутри мобы (кроме Warden'а), все клетки
+-- (промпты Open/рычаги/Free Prisoner), все сундуки (Interact), лут → Exit. Клетку босса (BossCell) не трогаем.
 function DF_raidStep(dp)
 	local done = getgenv().DF_raidDone or {}
 	getgenv().DF_raidDone = done
@@ -3412,44 +3417,97 @@ function DF_raidStep(dp)
 		local id = g:IsA("Model") and DF_isT5(g) and (g:GetAttribute("SessionStructureId") or g:GetAttribute("SessionDungeonId") or gateKey(g))
 		local p = id and not done[id] and pos(g)
 		if p and flat(p, dp) <= CONFIG.DungeonChase and hpPct() >= CONFIG.SafeHpPct then
-			local okB, cf, size = pcall(g.GetBoundingBox, g)
-			local c = okB and cf.Position or p
-			local rad = okB and math.max(size.X, size.Z, 400) / 2 + 20 or 220
-			status(("[Raid] %s (сложность %s): залетаю — мобы и сундуки, без входа"):format(g.Name, tostring(g:GetAttribute("Difficulty"))))
+			status(("[Raid] %s: лечу — моли у входа, потом внутрь"):format(g.Name))
 			driveStop()
-			-- издалека данж не прогружен (ни мобов, ни сундуков): сначала долетаем и ждём стриминг
-			pcall(function() player:RequestStreamAroundAsync(c, 5) end)
-			moveTo(g, nil, c + Vector3.new(0, 15, 0))
-			task.wait(2)
-			okB, cf, size = pcall(g.GetBoundingBox, g)
-			if okB and size.Magnitude > 20 then c, rad = cf.Position, math.max(size.X, size.Z, 400) / 2 + 20 end
-			local t0, kills, idleAt = os.clock(), 0, os.clock()
+			local t0, kills, used = os.clock(), 0, 0
+			local function live() return Running and State.Auto and os.clock() - t0 < 900 end
+			local function lowHp()
+				if hpPct() < 50 and not heal(80) and hpPct() < 35 then status("[Raid] мало HP, аптечек нет — бросаю"); return true end
+			end
 			DF_raiding = true
-			while Running and State.Auto and os.clock() - t0 < 300 do
-				if hpPct() < 50 and not heal(80) and hpPct() < 35 then status("[Raid] мало HP, аптечек нет — бросаю"); break end
-				local list = enemies(rad, c)
+			-- 1) моли/мобы у входа
+			pcall(function() player:RequestStreamAroundAsync(p, 5) end)
+			local pr
+			for _ = 1, 40 do pr = enterPrompt(g); if pr then break end; task.wait(0.25) end
+			local gp = pr and promptPos(pr) or p
+			if dist(g) > 60 then moveTo(g, nil, gp + Vector3.new(0, 6, 6)) end
+			local idle = os.clock()
+			while live() and not lowHp() and os.clock() - idle < 4 do
+				local list = enemies(200, gp)
+				if #list > 0 then Phase = ("Рейд %s: моли у входа (%d)"):format(g.Name, #list); killOne(list[1]); kills += 1; idle = os.clock() end
+				task.wait(0.1)
+			end
+			-- 2) вход
+			pr = enterPrompt(g)
+			local inside = false
+			if pr and live() then
+				for _ = 1, 20 do if pr.Enabled then break end; task.wait(0.25) end
+				local r = hrp()
+				if r then r.CFrame = CFrame.new(promptPos(pr) + Vector3.new(0, 3, 4)) end
+				task.wait(0.4)
+				local from = hrp() and hrp().Position
+				local function entered() local c = hrp(); return c and from and (c.Position - from).Magnitude > 100 end
+				if not usePrompt(pr, entered) then
+					local inter = knit("InteractionService", "Interact")
+					if inter then pcall(function() inter:InvokeServer(pr.Parent.Parent) end) end
+				end
+				for _ = 1, 20 do if entered() then break end; task.wait(0.25) end
+				inside = entered()
+				status(("[Raid] %s: вход %s (промпт %s)"):format(g.Name, inside and "ок" or "НЕ сработал", tostring(pr.Enabled)))
+			else status(("[Raid] %s: промпт Enter не найден"):format(g.Name)) end
+			-- 3) внутри: мобы → клетки/рычаги/сундуки → лут; конец — 6 с без дел
+			local tried = {}
+			idle = os.clock()
+			while inside and live() and not lowHp() do
+				local r = hrp()
+				local list = enemies(300)
+				local acted = false
 				if #list > 0 then
-					Phase = ("Рейд %s: бой (%d)"):format(g.Name, #list)
-					killOne(list[1]); kills += 1; idleAt = os.clock()
-				elseif chestStep(c, rad) or lootStep(c, rad) then Phase = "Рейд " .. g.Name .. ": сундуки/лут"; idleAt = os.clock()
-				elseif os.clock() - idleAt > 5 then break end -- chestStep сканирует раз в 1.5с: конец — только после 5с тишины
+					Phase = ("Рейд %s: бой (%d)"):format(g.Name, #list); killOne(list[1]); kills += 1; acted = true
+				else
+					local best, bd
+					for _, d in ipairs(g:GetDescendants()) do
+						if d:IsA("ProximityPrompt") and d.Enabled and (tried[d] or 0) < 3 and d.ActionText ~= "Enter" and d.ActionText ~= "Exit"
+							and d.ActionText ~= "Buy" and not d:FindFirstAncestor("BossCell") then
+							local pp = promptPos(d)
+							local dd = pp and r and (pp - r.Position).Magnitude
+							if dd and (not bd or dd < bd) then best, bd = d, dd end
+						end
+					end
+					if best then
+						tried[best] = (tried[best] or 0) + 1
+						Phase = ("Рейд %s: %s"):format(g.Name, best.ActionText)
+						moveTo(best.Parent, nil, promptPos(best) + Vector3.new(0, 3, 3))
+						task.wait(0.3)
+						local was = best.Enabled
+						local ok = usePrompt(best, function() return not best.Parent or (was and not best.Enabled) end)
+						if ok then used += 1 end
+						status(("[Raid] %s: %s → %s"):format(best.Parent:GetFullName():gsub("^Workspace%.", ""), best.ActionText, ok and "ок" or "не вышло"))
+						task.wait(0.8)
+						acted = true
+					elseif lootStep(r and r.Position or p, 300) then acted = true end
+				end
+				if acted then idle = os.clock() elseif os.clock() - idle > 6 then break end
 				task.wait(0.1)
 			end
 			DF_raiding = false
-			-- скрипт остановили/перезагрузили посреди рейда — не «забываем», вернёмся
-			if not (Running and State.Auto) then return true end
-			-- какие сундуки остались неоткрытыми и почему (для отладки: замки, рычаги…)
-			local left = {}
-			for _, d in ipairs(g:GetDescendants()) do
-				if d:IsA("ProximityPrompt") and d.Enabled and #left < 6 then
-					table.insert(left, ("%s|%s|chest=%s"):format(d.Parent.Name, d.ActionText, tostring(chestInfo(d))))
-				end
+			if not (Running and State.Auto) then return true end -- остановили/перезагрузили — вернёмся
+			-- 4) выход
+			if inside then
+				local ex
+				for _, d in ipairs(g:GetDescendants()) do if d:IsA("ProximityPrompt") and d.ActionText == "Exit" then ex = d; break end end
+				if ex then
+					moveTo(ex.Parent, nil, promptPos(ex) + Vector3.new(0, 3, 3))
+					task.wait(0.3)
+					local from = hrp() and hrp().Position
+					usePrompt(ex, function() local c = hrp(); return c and from and (c.Position - from).Magnitude > 100 end)
+					task.wait(1)
+				else status("[Raid] промпт Exit не найден — улетаю к буру") end
 			end
-			if #left > 0 then status("[Raid] остались промпты: " .. table.concat(left, "; ")) end
 			done[id] = true
 			local gk = gateKey(g)
 			if gk then gateDone[gk] = true end
-			status(("[Raid] %s: готово за %dс, боёв %d — забыл"):format(g.Name, os.clock() - t0, kills))
+			status(("[Raid] %s: готово за %dс, боёв %d, промптов %d — забыл"):format(g.Name, os.clock() - t0, kills, used))
 			local d = getDrill()
 			if d then tpToDrill(d) end
 			return true
