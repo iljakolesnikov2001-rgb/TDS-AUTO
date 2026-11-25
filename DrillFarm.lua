@@ -16,7 +16,7 @@ local CONFIG = {
 	MedkitStock      = 12,    -- держать аптечек в запасе (покупаются в магазине крепости)
 	BandageStock     = 3,     -- бинтов (дешёвые, 10 монет) держать до стольких, сверх MedkitStock
 	ShopRestock      = 300,   -- каждый магазин обновляет товар раз в 5 минут
-	BandageBuyFromX  = 15000, -- бинты не покупаем, пока бур не дальше этого X (рано мобы слабые — монеты на апгрейды)
+	BandageBuyFromM  = 15000, -- бинты не покупаем, пока бур не дальше стольких метров (HUD Depth): рано мобы слабые
 	BandageRunDist   = 6000,  -- за бинтами в запомненный магазин летаем не дальше этого от бура
 	SellFarPct       = 85,   -- сумка заполнена на N% — продаём даже на дальнем столе
 	SaveGearOnStall  = true, -- бур не продвигается N минут — уносим лучшее через алтарь Save Gear (бесплатно, конец захода)
@@ -30,7 +30,7 @@ local CONFIG = {
 	ItemsMinValue    = 0,
 	IgnoredItems     = { "Rock", "DeathChest" },
 	CorpseSellOnly   = { "Mole Man" }, -- эти трупы только продаём, в топливо никогда
-	NightHoldX       = 40000, -- дальше этого X ночью бур не водим (мобов много и бьют сильно): данжи, бой, лут, продажа
+	NightHoldM       = 40000, -- дальше стольких метров (HUD Depth) ночью бур не водим (мобов много и бьют сильно): данжи, бой, лут, продажа
 	BountyOnly       = { "Bandit" }, -- эти трупы обычный стол не берёт (только Bounty-лагерь): для мешка они ничего не стоят
 	-- порядок покупки апгрейдов бура (сначала урон по стенам). Карточки за Robux не покупаются никогда.
 	-- порядок покупки апгрейдов бура (тир-лист): сначала строго по списку,
@@ -1857,9 +1857,16 @@ function DF_dropExtraCoal()
 	return extra > 0 and DF_dropTool("Ore_Coal", extra) or 0
 end
 -- бинты (слабые) нужны, только пока аптечек меньше нормы; с полным запасом аптечек — 0
-function DF_bandBuyOk()
+-- дистанция в метрах, как в HUD игры (UI.HUD.Depth.DepthCount = "10,805m"); X бура ≠ метры (1 st ≈ 3 м)
+function DF_depthM()
+	local ok, txt = pcall(function() return player.PlayerGui.UI.HUD.Depth.DepthCount.Text end)
+	local n = ok and tonumber((tostring(txt):gsub("[^%d]", "")))
+	if n then return n end
 	local d = getDrill()
-	return d ~= nil and pos(d).X >= CONFIG.BandageBuyFromX
+	return d and (pos(d).X + 740) * 2.95 or 0
+end
+function DF_bandBuyOk()
+	return DF_depthM() >= CONFIG.BandageBuyFromM
 end
 function DF_bandStock()
 	return DF_medCount(false) >= CONFIG.MedkitStock and 0 or CONFIG.BandageStock
@@ -4518,18 +4525,18 @@ task.spawn(function()
 	end
 end)
 
--- Ночь (Lighting.IsDayTime=false) за X ≥ NightHoldX: бур стоит, бот делает всё остальное (режим NoDrive).
+-- Ночь (Lighting.IsDayTime=false) дальше NightHoldM метров (HUD): бур стоит, бот делает всё остальное (режим NoDrive).
 -- Флаг в getgenv — переживает перезагрузку; утром снимаем NoDrive, только если включали его сами.
 task.spawn(function()
 	while Running do
 		task.wait(2)
 		local d = getDrill()
 		local night = game:GetService("Lighting"):GetAttribute("IsDayTime") == false
-		local want = State.Auto and night and d ~= nil and pos(d).X >= CONFIG.NightHoldX
+		local want = State.Auto and night and d ~= nil and DF_depthM() >= CONFIG.NightHoldM
 		if want and not State.NoDrive then
 			State.NoDrive, getgenv().DF_nightNoDrive = true, true
 			pcall(driveStop)
-			status(("[Night] ночь, X=%d — не еду: данжи, бой, лут, продажа"):format(math.floor(pos(d).X)))
+			status(("[Night] ночь, %d м — не еду: данжи, бой, лут, продажа"):format(math.floor(DF_depthM())))
 		elseif not want and getgenv().DF_nightNoDrive and (not night or not State.Auto) then
 			State.NoDrive, getgenv().DF_nightNoDrive = false, nil
 			status("[Night] утро — снова еду")
