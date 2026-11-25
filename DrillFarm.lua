@@ -2485,7 +2485,8 @@ gearGain = function(it)
 			if DF_medCount(true) >= DF_bandStock() or not DF_bandBuyOk() then return nil end
 		elseif DF_medCount(false) >= CONFIG.MedkitStock then return nil end
 		-- дорогие аптечки (Golden за 1000) — только если монет много: апгрейды бура важнее
-		if (it:GetAttribute("Cost") or 0) > math.max(100, shopCoins * 0.15) then return nil end
+		-- за 84 км (Glowing Core) все мобы с Fire: Advanced (60% за 500) / Golden (100% за 1000) окупаются — до 40% монет
+		if (it:GetAttribute("Cost") or 0) > math.max(100, shopCoins * (DF_depthM() >= 84000 and 0.4 or 0.15)) then return nil end
 		return (it:GetAttribute("Health") or 0.1) * 100 / math.max(it:GetAttribute("Cost") or 1, 1) * 0.05
 	elseif cat == "Armor" then
 		local slot = it:GetAttribute("ArmorType")
