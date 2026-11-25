@@ -1438,6 +1438,8 @@ local function upgradeStep(force)
 			if not rank and table.find(CONFIG.UpgradeBalanced, o.UpgradeName) then
 				local d = getDrill()
 				rank = #CONFIG.UpgradePriority + 1 + (d and tonumber(d:GetAttribute(o.UpgradeName)) or 0) / 1000
+				-- игрок: TeamHealth важнее DrillDefense и остальной группы — берём первым из неё
+				if o.UpgradeName == "TeamHealth" then rank -= 0.5 end
 			end
 			rank = rank or 100
 			if not bestRank or rank < bestRank then best, bestRank = o, rank end
