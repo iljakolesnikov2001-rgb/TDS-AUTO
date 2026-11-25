@@ -31,6 +31,7 @@ local CONFIG = {
 	IgnoredItems     = { "Rock", "DeathChest" },
 	CorpseSellOnly   = { "Mole Man" }, -- эти трупы только продаём, в топливо никогда
 	NightHoldM       = 40000, -- дальше стольких метров (HUD Depth) ночью бур не водим (мобов много и бьют сильно): данжи, бой, лут, продажа
+	AvoidMobs        = { "Wrenlow", "Warden" }, -- босс SoulPrison: не бьём и не подходим (мобов в 40 st от него тоже не трогаем)
 	BountyOnly       = { "Bandit" }, -- эти трупы обычный стол не берёт (только Bounty-лагерь): для мешка они ничего не стоят
 	-- порядок покупки апгрейдов бура (сначала урон по стенам). Карточки за Robux не покупаются никогда.
 	-- порядок покупки апгрейдов бура (тир-лист): сначала строго по списку,
@@ -1519,8 +1520,16 @@ enemies = function(radius, center)
 	local out, folder, r = {}, workspace:FindFirstChild("Npc"), hrp()
 	center = center or (r and r.Position)
 	if not (folder and center) then return out end
+	local avoid = {}
+	for _, m in ipairs(folder:GetChildren()) do
+		if hasKey(m.Name, CONFIG.AvoidMobs) or hasKey(tostring(m:GetAttribute("RealName") or ""), CONFIG.AvoidMobs) then
+			local p = pos(m); if p then table.insert(avoid, p) end
+		end
+	end
 	for _, m in ipairs(folder:GetChildren()) do
 		local h = m:IsA("Model") and m:FindFirstChild("Humanoid")
+		local mp = #avoid > 0 and pos(m)
+		for _, ap in ipairs(avoid) do if mp and (mp - ap).Magnitude < 40 then h = nil end end
 		-- мимики (Health ~1e11) — сундуки-монстры, их не бьём
 		if h and h.Health > 0 and h.MaxHealth < 1e6 and (m:GetAttribute("NpcFaction") == "Enemy" or DF_isThief(m))
 			and (killSkip[m] or 0) < os.clock() then
