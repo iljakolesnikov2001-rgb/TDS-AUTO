@@ -2068,6 +2068,8 @@ local chestTried = setmetatable({}, { __mode = "k" })
 local function chestInfo(prompt)
 	local npc = workspace:FindFirstChild("Npc")
 	if npc and prompt:IsDescendantOf(npc) then return nil end -- мимик — монстр, не сундук
+	-- «Buy» = покупка (стенд брони за Robux, магазин) — не сундук
+	if prompt.ActionText == "Buy" or prompt:FindFirstAncestor("ArmorSaleStand") or prompt:FindFirstAncestor("Shop") then return nil end
 	local node = prompt
 	local isChest = false
 	for _ = 1, 6 do
