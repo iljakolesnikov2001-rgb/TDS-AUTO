@@ -1800,6 +1800,10 @@ task.spawn(function()
 							if d and d < 300 and (not bd or d < bd) then best, bd = m, d end
 						end
 						if best then table.insert(near, "дальний: " .. best.Name .. "@" .. math.floor(bd)) end
+						-- периодический урон без мобов (DoT): какие флаги-эффекты висят на персонаже
+						local c, fx = player.Character, {}
+						for k, v in pairs(c and c:GetAttributes() or {}) do if v == true then table.insert(fx, k) end end
+						if #fx > 0 then table.insert(near, "эффекты: " .. table.concat(fx, ",")) end
 					end
 					-- сильный удар — пишем, что играет у ближайшего босса (для уклонения от замаха)
 					if last - v >= 150 then
