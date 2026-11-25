@@ -2040,6 +2040,7 @@ local function hide(why, keep)
 		local t0, lastHp, lastCheck = os.clock(), hpPct(), os.clock()
 		while Running and (busy() or State.KillAura) and alive() and ((hpPct() < CONFIG.SafeHpPct and dangerNear()) or (keep and keep())) and (os.clock() - t0 < 90 or dangerNear() and hpPct() < CONFIG.SafeHpPct and os.clock() - t0 < 600)
 			and not (hpPct() >= 35 and leechOnDrill()) -- пиявка сосёт топливо — выходим её бить
+			and not (#medkits() == 0 and os.clock() - t0 > 30 and os.clock() > (DF_medShopNext or 0)) -- без аптечек — за ними в магазин
 			and not (fuelPct() < 5 and #fuelTools() > 0 and #enemies(15, pos(getDrill()) or r.Position) == 0) do -- пустой бак: заправить
 			r = hrp()
 			if not r then break end
@@ -2048,7 +2049,8 @@ local function hide(why, keep)
 			r.CFrame = spot
 			if hpPct() < CONFIG.SafeHpPct and heal(CONFIG.SafeHpPct) then lastHp = hpPct() end
 			if os.clock() - lastCheck > 2 then
-				if hpPct() < lastHp - 2 then
+				local fire = player.Character and player.Character:GetAttribute("IsOnFire") == true
+				if hpPct() < lastHp - 2 and not fire then -- горение (IsOnFire) — урон со временем, смена укрытия не поможет
 					spot = safeSpot(spot.Position) or spot
 					status("[Guard] достают и тут — меняю укрытие" .. (poisoned() and " (яд)" or ""))
 				end
@@ -3551,6 +3553,15 @@ local function autoStep()
 			Phase = "Мало HP — уезжаю от мобов"
 			drive()
 			return
+		end
+		-- аптечек нет: продать лут и купить аптечки/бинты, а не сидеть в укрытии по 10 минут на регене
+		if #medkits() == 0 and os.clock() > (AS.gateShopNext or 0) then
+			AS.gateShopNext = os.clock() + 45; DF_medShopNext = AS.gateShopNext
+			local cp = (d0 and pos(d0)) or (hrp() and hrp().Position)
+			if cp then
+				pcall(sellStep, cp, true)
+				if shopStep(cp, true) or AS.bandageRun(cp, true) then return end
+			end
 		end
 		if dangerNear() then
 			Phase = "Укрытие (мало HP)"
