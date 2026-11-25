@@ -587,7 +587,7 @@ local pickupOresNear -- определяется ниже (после collect)
 -- Точка продажи: ...TradingPost.SellParts.SellPart
 -- Если стол далеко, игра его не прогружает (streaming) — запоминаем позицию,
 -- летим туда и просим сервер прогрузить область.
-local lastSellPos
+local lastSellPos = DF_lastSellPos -- глобал: переживает перезапуск скрипта (иначе «стол ни разу не был прогружен» и мешок не продать)
 local function findSellParts()
 	return findAll(function(d)
 		-- столы в папках CutScene* — декорации катсцен, продать там нельзя
@@ -600,7 +600,7 @@ local function findSellParts()
 end
 local function nearestSellPart()
 	local sp = nearest(findSellParts())
-	if sp then lastSellPos = sp.Position; return sp end
+	if sp then lastSellPos = sp.Position; DF_lastSellPos = lastSellPos; return sp end
 	if not lastSellPos then
 		status("[Sell] стол продажи не найден (ни разу не был прогружен)")
 		return nil
@@ -623,7 +623,7 @@ end
 task.spawn(function()
 	while Running do
 		local sp = nearest(findSellParts())
-		if sp then lastSellPos = sp.Position end
+		if sp then lastSellPos = sp.Position; DF_lastSellPos = lastSellPos end
 		task.wait(5)
 	end
 end)
@@ -1712,6 +1712,10 @@ local function hordeKill(m, center)
 		if v.Magnitude > 8 and Vector3.new(v.X, 0, v.Z):Dot(p - r.Position) > 0 then p = p + Vector3.new(v.X, 0, v.Z) * 0.15; rr = math.min(range, 5) end
 		for _, an in ipairs(bossAnims or {}) do
 			for _, tr in ipairs(an:GetPlayingAnimationTracks()) do
+				-- разведка: какие треки играет босс (имя/длина) — чтобы уворачиваться и от обычного удара (Lord бьёт на 23 st каждые 3 с)
+				DF_bossTr = DF_bossTr or {}
+				local tk = m.Name .. "/" .. tr.Name .. "/" .. (tr.Animation and tr.Animation.AnimationId or "?")
+				if not tr.Looped and not DF_bossTr[tk] then DF_bossTr[tk] = true; status(("[BossAnim] %s %.2fс"):format(tk, tr.Length)) end
 				if not tr.Looped and tr.Length >= 2 and tr.TimePosition < tr.Length - 0.2 then
 					local u = os.clock() + (tr.Length - tr.TimePosition) + 0.3
 					if u > dodgeUntil then
@@ -3741,6 +3745,7 @@ local function autoStep()
 	if not State.NoDrive and DF_raidStep(dp) then return end
 	if not State.NoDrive and pitStep(dp, 200) then return end
 	local g, key = gateNear(dp)
+	if bagFull() then g = nil end -- сначала продать (ниже sellStep), иначе вход-выход по кругу
 	if g then
 		-- ждать HP на месте нельзя — бьют; лечимся аптечкой, иначе ждём в укрытии
 		if hpPct() < CONFIG.SafeHpPct then
@@ -3760,7 +3765,8 @@ local function autoStep()
 	end
 	-- фокус на данжах: запомненные непройденные ворота позади бура (прогрузились далеко от бура или бур проехал их,
 	-- пока бот был занят) — летим туда сами. Не чаще раза в 5 с, чтобы не долбить недоступные ворота.
-	if hpPct() >= CONFIG.SafeHpPct and AS.pickGate and os.clock() > (AS.chaseNext or 0) then
+	-- с полным мешком в данж не летим: вход → «мешок полон — выхожу» по кругу (25.11)
+	if hpPct() >= CONFIG.SafeHpPct and AS.pickGate and os.clock() > (AS.chaseNext or 0) and not bagFull() then
 		AS.chaseNext = os.clock() + 5
 		local r = hrp()
 		local best, bk -- (r and f() обрезал бы второе значение — ключ ворот)
@@ -4124,6 +4130,7 @@ noDriveIdle = function(dp)
 		local best, bk = pickGate(r.Position, function(g) return flat(g.pos, dp) <= 400 and g.pos.X <= dp.X + 150 end)
 		if best then farmGate(best, bk, r); return true end
 	end
+	if bagFull() then return false end -- иначе farmStep раз в секунду дёргает onBagFull (ночью без стола продажи — спам)
 	local node = nearest(oreNodes(), CONFIG.WorkRadius)
 	if not (node and flat(node.Position, dp) <= CONFIG.WorkRadius) then return false end
 	Phase = "Без вождения: копаю руду"
