@@ -800,7 +800,7 @@ end
 -- редкость бережём только у снаряжения: легендарный хлам (Diamond Goblet, 1000) — просто деньги и слот мешка
 -- цена для обычного стола: bounty-трупы (Bandit Miner …) там не продаются — 0
 function DF_value(name, cat, v)
-	if cat == "Corpse" and hasKey(tostring(name or ""), CONFIG.BountyOnly) then return 0 end
+	if cat == "Corpse" and (hasKey(tostring(name or ""), CONFIG.BountyOnly) or (DF_bountyNames or {})[name]) then return 0 end
 	return v or 0
 end
 function DF_keepItem(rar, cat)
@@ -1081,6 +1081,7 @@ sellAll = function(sellPart)
 				local rar, cat = it:GetAttribute("Rarity") or "", it:GetAttribute("Category") or ""
 				if it:GetAttribute("HasBounty") then -- bounty-труп: стол не берёт, везём к Ozy
 					pickupItem(it); DF_bountyHeld = (DF_bountyHeld or 0) + 1
+					DF_bountyNames = DF_bountyNames or {}; DF_bountyNames[it.Name] = true -- в инвентаре метки нет: запомнили имя, больше на стол не кидаем
 					status("[Sell] bounty-труп — к Ozy: " .. it.Name)
 				elseif DF_keepItem(rar, cat)
 					and not (coal > 0 and it:GetAttribute("ItemDatabaseId") == "Ore_Coal")
@@ -1111,7 +1112,8 @@ sellAll = function(sellPart)
 					-- страховка: выпало не то (легендарка/топливо) — поднять обратно
 					local rar, cat = it:GetAttribute("Rarity") or "", it:GetAttribute("Category") or ""
 					if it:GetAttribute("HasBounty") then
-						pickupItem(it); DF_bountyHeld = (DF_bountyHeld or 0) + 1; failed[target.Id] = true
+						pickupItem(it); DF_bountyHeld = (DF_bountyHeld or 0) + 1
+					DF_bountyNames = DF_bountyNames or {}; DF_bountyNames[it.Name] = true; failed[target.Id] = true
 						status("[Sell] bounty-труп — к Ozy: " .. it.Name)
 					elseif DF_keepItem(rar, cat) then
 						pickupItem(it)
@@ -2098,7 +2100,7 @@ local function lootOne(center, radius, fuelOnly)
 	if full and not fuelOnly then
 		for _, e in ipairs(invEntries()) do
 			local v = DF_value(e.Name, e.Category, e.Value)
-			if sellable(e) and (not cheap or v < cheap.v) then cheap = e; cheap.v = v end
+			if sellable(e) and v > 0 and (not cheap or v < cheap.v) then cheap = e; cheap.v = v end
 		end
 	end
 	local function room(it) return not full or (cheap ~= nil and DF_value(it.Name, it:GetAttribute("Category"), it:GetAttribute("Value")) >= math.max(100, cheap.v * 2)) end
@@ -2300,6 +2302,7 @@ DF_bountyStep = function(center)
 	-- платят валютой Bounty, не монетами: успех — хоть один bounty-труп остался на квадрате
 	DF_bountyNext = os.clock() + ((sold > 0 or (type(c1) == "number" and type(c0) == "number" and c1 > c0)) and 0 or 300)
 	if sold > 0 then DF_bountyHeld = 0 end
+	DF_bountyNames = nil -- у Ozy проверили заново: без bounty теперь уйдут на обычный стол
 	status(("[Bounty] выкинул %d трупов, bounty %d, без bounty вернул %d, монеты %s → %s"):format(#list, sold, back, tostring(c0), tostring(c1)))
 	return true
 end
