@@ -19,6 +19,8 @@ local CONFIG = {
 	BandageBuyFromM  = 15000, -- бинты не покупаем, пока бур не дальше стольких метров (HUD Depth): рано мобы слабые
 	BandageRunDist   = 6000,  -- за бинтами в запомненный магазин летаем не дальше этого от бура
 	SellFarPct       = 85,   -- сумка заполнена на N% — продаём даже на дальнем столе
+	GodMode          = true, -- хитбокс на сервере под полом (кадр Heartbeat), на клиенте — на месте: мобы и боссы не попадают
+	GodDepth         = 10,   -- на сколько st ниже ног прятать хитбокс
 	SaveGearOnStall  = true, -- бур не продвигается N минут — уносим лучшее через алтарь Save Gear (бесплатно, конец захода)
 	SaveGearStallMin = 8,
 	SellAtPct        = 70,   -- продаём, когда сумка заполнена на N% и стол продажи рядом с буром
@@ -163,6 +165,12 @@ local function pos(obj)
 		local ok, cf = pcall(obj.GetPivot, obj)
 		if ok then return cf.Position end
 	end
+end
+
+-- God Mode опускает корень между Heartbeat и следующим кадром: сохранённые CFrame берём «настоящие»
+DF_realCF = function(r)
+	if DF_godLow and r.CFrame == DF_godLow then return DF_godLow + Vector3.new(0, DF_godDepth, 0) end
+	return r.CFrame
 end
 
 local function dist(obj)
@@ -1807,7 +1815,7 @@ local function killStep(radius, back)
 	if #enemies(radius) == 0 then return false end
 	Killing, Selling = true, true
 	local r = hrp()
-	local origin = r and r.CFrame
+	local origin = r and DF_realCF(r)
 	pcall(function()
 		while Running and (State.KillAura or busy()) do
 			local list = enemies(radius)
@@ -2025,7 +2033,7 @@ local function healRaw(belowPct)
 			-- лечимся в 500 st над землёй: туда мобы не достают и бинт не сбивают
 			if h.SeatPart then driveStop() end
 			local r0 = hrp()
-			local back = r0 and r0.CFrame
+			local back = r0 and DF_realCF(r0)
 			local hold = back and RunService.Heartbeat:Connect(function()
 				local r = hrp()
 				if r then r.Anchored = false; r.AssemblyLinearVelocity = Vector3.zero; r.CFrame = back + Vector3.new(0, 500, 0) end
@@ -2467,7 +2475,8 @@ local sellNext = 0
 DF_bountyStep = function(center)
 	local function findPads()
 		return findAll(function(d)
-			return d:IsA("BasePart") and d.Name == "BountySellHitBox" and not d:GetFullName():find("CutScene", 1, true)
+			-- в лагере это BountyCamp.Important.BountySell (так продаёт рабочий хаб); BountySellHitBox — старое имя
+			return d:IsA("BasePart") and (d.Name == "BountySell" or d.Name == "BountySellHitBox") and not d:GetFullName():find("CutScene", 1, true)
 		end)
 	end
 	local pads = findPads()
@@ -2495,7 +2504,7 @@ DF_bountyStep = function(center)
 		-- летим к лагерю и просим сервер прогрузить его (bandit-трупы продаются только у Ozy, ~380 за штуку)
 		local r = hrp()
 		if not r then return false end
-		ret = r.CFrame
+		ret = DF_realCF(r)
 		driveStop()
 		r.AssemblyLinearVelocity = Vector3.zero
 		r.CFrame = CFrame.new(DF_campPos + Vector3.new(0, 6, 0))
@@ -4397,6 +4406,37 @@ task.spawn(function()
 	end
 end)
 
+
+-- God Mode (как в MiyuGUI): в Heartbeat (после физики, перед отправкой на сервер) опускаем корень под пол,
+-- до отрисовки и физики следующего кадра возвращаем. Сервер видит хитбокс под землёй — удары мобов/боссов мимо.
+-- Не трогаем: за рулём, в укрытии (якорь), во время плавного перелёта (moveTo двигает от текущей позиции).
+table.insert(Connections, RunService.Heartbeat:Connect(function()
+	DF_godLow = nil
+	if not (CONFIG.GodMode and (busy() or State.KillAura)) or Moving or Hiding then return end
+	local c = player.Character
+	local r, h = hrp(), c and c:FindFirstChildOfClass("Humanoid")
+	if not (r and h) or h.Health <= 0 or h.SeatPart or r.Anchored then return end
+	DF_godDepth = CONFIG.GodDepth + h.HipHeight + r.Size.Y / 2
+	r.CFrame = r.CFrame - Vector3.new(0, DF_godDepth, 0)
+	DF_godLow = r.CFrame
+end))
+DF_godRestore = function()
+	local low = DF_godLow
+	if not low then return end
+	DF_godLow = nil
+	local r = hrp()
+	if not r then return end
+	-- скрипт успел переставить персонажа: если считал позицию от опущенной (та же высота) — поднимаем тоже
+	if r.CFrame == low or math.abs(r.Position.Y - low.Position.Y) < 3 then
+		r.CFrame = r.CFrame + Vector3.new(0, DF_godDepth, 0)
+	end
+end
+do
+	local bind = "DF_god" .. tostring(os.clock()) -- своё имя: выгрузка старой копии не снимет привязку новой
+	RunService:BindToRenderStep(bind, Enum.RenderPriority.First.Value, DF_godRestore)
+	table.insert(Connections, { Disconnect = function() RunService:UnbindFromRenderStep(bind) end })
+end
+table.insert(Connections, RunService.Stepped:Connect(DF_godRestore))
 
 -- Noclip: всегда, если включён тумблер, и автоматически во время перелётов скрипта
 local noclipWas = {}
