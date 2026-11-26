@@ -8,7 +8,7 @@ local t0 = os.clock()
 while not RS:FindFirstChild("DrillService", true) and os.clock() - t0 < 90 do task.wait(1) end
 if not RS:FindFirstChild("DrillService", true) then return end -- лобби
 local player = game:GetService("Players").LocalPlayer
-local KEYS = { "King", "Phoenix", "GoblinLord", "Goblin Lord" }
+local KEYS = { "Kings", "Phoenix", "GoblinLord", "Goblin Lord" } -- королевские (Kings_*) и фениксовые (Phoenix_*) вещи
 
 local cache = {}
 local function knit(service, name)
@@ -72,12 +72,15 @@ while true do
 			r.CFrame = CFrame.new(p + Vector3.new(0, 3, 0))
 			task.wait(0.3)
 			local name = it:GetAttribute("DisplayName") or it.Name
-			if it:GetAttribute("Category") == "Armor" then
-				call("InteractionService", "Interact", it) -- броня надевается через E, Pickup лишь кладёт в рюкзак
-			else
-				call("CarryInventoryService", "Pickup", it)
+			-- броня надевается через E (Interact), Pickup лишь кладёт в рюкзак; не вышло одним — пробуем другим
+			local armor = it:GetAttribute("Category") == "Armor" or it.Name:find("Helmet") or it.Name:find("Chest") or it.Name:find("Legs") or it.Name:find("Boots")
+			local ways = armor and { "InteractionService.Interact", "CarryInventoryService.Pickup" } or { "CarryInventoryService.Pickup", "InteractionService.Interact" }
+			for _, w in ipairs(ways) do
+				local s, n = w:match("(.+)%.(.+)")
+				call(s, n, it)
+				task.wait(0.8)
+				if not it:IsDescendantOf(folder) then break end
 			end
-			task.wait(0.8)
 			log(("%s: %s"):format(name, it:IsDescendantOf(folder) and "не взял, повтор через 20 с" or "взял"))
 			r = hrp()
 			if r then r.AssemblyLinearVelocity = Vector3.zero; r.CFrame = back end
