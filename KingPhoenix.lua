@@ -1,6 +1,5 @@
 -- KingPhoenix.lua — дополнение к MiyuGUI (кладётся в Autoexecute рядом с хабом).
 -- 1) В начале забега забирает сохранённые вещи из стартового ящика (PlayerService.SetLoadout, как в DrillFarm).
--- 2) Вещи короля/феникса, лежащие рядом: броню надевает (Interact), оружие/кирки подбирает (Pickup).
 local function log(s) pcall(appendfile, "DrillFarm.log", os.date("%H:%M:%S") .. " [KingPhoenix] " .. s .. "\n") end
 if not game:IsLoaded() then game.Loaded:Wait() end
 local RS = game:GetService("ReplicatedStorage")
@@ -8,7 +7,6 @@ local t0 = os.clock()
 while not RS:FindFirstChild("DrillService", true) and os.clock() - t0 < 90 do task.wait(1) end
 if not RS:FindFirstChild("DrillService", true) then return end -- лобби
 local player = game:GetService("Players").LocalPlayer
-local KEYS = { "Kings", "Phoenix", "GoblinLord", "Goblin Lord" } -- королевские (Kings_*) и фениксовые (Phoenix_*) вещи
 
 local cache = {}
 local function knit(service, name)
@@ -52,38 +50,4 @@ task.spawn(function()
 	local ok = call("PlayerService", "SetLoadout", lo)
 	log(("из ящика: %s — %s"):format(table.concat(names, ", "), ok and "взял" or "не вышло"))
 end)
-
--- 2) вещи короля/феникса в мире (дроп с боссов)
-local function isTarget(it)
-	local s = (it.Name .. " " .. tostring(it:GetAttribute("DisplayName") or "")):lower()
-	for _, k in ipairs(KEYS) do if s:find(k:lower(), 1, true) then return true end end
-	return false
-end
-local tried = {}
-while true do
-	task.wait(1)
-	local folder, r = workspace:FindFirstChild("Items"), hrp()
-	for _, it in ipairs(folder and r and folder:GetChildren() or {}) do
-		local ok, p = pcall(function() return it:GetPivot().Position end)
-		if ok and (tried[it] or 0) < os.clock() and isTarget(it) and (p - r.Position).Magnitude < 150 then
-			tried[it] = os.clock() + 20
-			local back = r.CFrame
-			r.AssemblyLinearVelocity = Vector3.zero
-			r.CFrame = CFrame.new(p + Vector3.new(0, 3, 0))
-			task.wait(0.3)
-			local name = it:GetAttribute("DisplayName") or it.Name
-			-- броня надевается через E (Interact), Pickup лишь кладёт в рюкзак; не вышло одним — пробуем другим
-			local armor = it:GetAttribute("Category") == "Armor" or it.Name:find("Helmet") or it.Name:find("Chest") or it.Name:find("Legs") or it.Name:find("Boots")
-			local ways = armor and { "InteractionService.Interact", "CarryInventoryService.Pickup" } or { "CarryInventoryService.Pickup", "InteractionService.Interact" }
-			for _, w in ipairs(ways) do
-				local s, n = w:match("(.+)%.(.+)")
-				call(s, n, it)
-				task.wait(0.8)
-				if not it:IsDescendantOf(folder) then break end
-			end
-			log(("%s: %s"):format(name, it:IsDescendantOf(folder) and "не взял, повтор через 20 с" or "взял"))
-			r = hrp()
-			if r then r.AssemblyLinearVelocity = Vector3.zero; r.CFrame = back end
-		end
-	end
-end
+-- вещи Kings/Phoenix из сундуков собирает сам хаб (патч S.kpGearSweep в MiyuDrill.lua) — тут не дёргаем персонажа

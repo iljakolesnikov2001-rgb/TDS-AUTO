@@ -25530,13 +25530,64 @@ function S.coreNoteLap()
     CoreFarm._leaving = true
     CoreFarm.openAll = false
     local before = CoreFarm._coresBefore
-    if S.coreWantsStoreLap() and S.coreBeginStore() then
-        return
-    end
     task.spawn(function()
+        -- [patch] сундуки открыты: перед сохранением/выходом собрать вещи Kings и Phoenix со всей карты
+        pcall(S.kpGearSweep)
+        if S.coreWantsStoreLap() and S.coreBeginStore() then
+            return
+        end
         S.setAutofarm(false, { skipReturn = true })
         S.coreReturnLobby(before)
     end)
+end
+
+-- [patch] Kings_* / Phoenix_* из сундуков: броню надеваем (Interact = E), остальное Pickup; не вышло — другим способом
+function S.kpGearSweep()
+    local folder, root = workspace:FindFirstChild("Items"), S.getRoot()
+    if not (folder and root) then return 0 end
+    local list = {}
+    for _, it in ipairs(folder:GetChildren()) do
+        local n = (it.Name .. " " .. tostring(it:GetAttribute("DisplayName") or "")):lower()
+        if (n:find("kings", 1, true) or n:find("phoenix", 1, true)) and not n:find("kingslayer", 1, true)
+            and not CollectionService:HasTag(it, "ShopItem") then
+            local p = S.getItemPosition(it)
+            if p then list[#list + 1] = { it = it, p = p, d = (p - root.Position).Magnitude } end
+        end
+    end
+    if #list == 0 then return 0 end
+    table.sort(list, function(a, b) return a.d < b.d end)
+    local knit = S.getKnit()
+    local function svc(name) local ok, v = pcall(function() return knit.GetService(name) end); return ok and v or nil end
+    local inter, carry = svc("InteractionService"), svc("CarryInventoryService")
+    local got = 0
+    Autofarm.miningBusy = true
+    for _, e in ipairs(list) do
+        local it = e.it
+        local r = S.getRoot()
+        if not r or not it:IsDescendantOf(folder) then continue end
+        r.Anchored = false
+        r.AssemblyLinearVelocity = Vector3.zero
+        r.CFrame = CFrame.new(e.p + Vector3.new(0, 3, 0))
+        task.wait(0.3)
+        local armor = it:GetAttribute("Category") == "Armor" or it.Name:find("Helmet") or it.Name:find("Chest")
+            or it.Name:find("Legs") or it.Name:find("Boots")
+        local ways = {
+            function() if inter then inter:Interact(it) end end,
+            function() if carry then carry:Pickup(it) end end,
+            function() if S.EPick and S.EPick.pickup then S.EPick.pickup(it, true) end end,
+        }
+        if not armor then ways[1], ways[2] = ways[2], ways[1] end
+        for _, w in ipairs(ways) do
+            pcall(w)
+            task.wait(0.8)
+            if not it:IsDescendantOf(folder) then got += 1; break end
+        end
+        S.notify("Core", (it:IsDescendantOf(folder) and "Не взял: " or "Взял: ") .. it.Name, 3)
+        pcall(appendfile, "DrillFarm.log", os.date("%H:%M:%S") .. " [CoreGear] " .. it.Name .. (it:IsDescendantOf(folder) and " — не взял" or " — взял") .. "
+")
+    end
+    Autofarm.miningBusy = false
+    return got
 end
 
 function S.coreReturnLobby(before)
