@@ -2262,6 +2262,7 @@ end
 
 if typeof(getgenv) == "function" then
     getgenv().MiyuGUI_DTEC_UNLOAD = S.unloadMiyuGUIDtec
+    getgenv().MiyuS = S -- доступ для ручных команд (save.lua)
 end
 
 -- Depth from dump:
@@ -25583,8 +25584,7 @@ function S.kpGearSweep()
             if not it:IsDescendantOf(folder) then got += 1; break end
         end
         S.notify("Core", (it:IsDescendantOf(folder) and "Не взял: " or "Взял: ") .. it.Name, 3)
-        pcall(appendfile, "DrillFarm.log", os.date("%H:%M:%S") .. " [CoreGear] " .. it.Name .. (it:IsDescendantOf(folder) and " — не взял" or " — взял") .. "
-")
+        pcall(appendfile, "DrillFarm.log", os.date("%H:%M:%S") .. " [CoreGear] " .. it.Name .. (it:IsDescendantOf(folder) and " — не взял" or " — взял") .. "\n")
     end
     Autofarm.miningBusy = false
     return got
@@ -31757,11 +31757,14 @@ do
     -- Món nào được phép nhặt? Revive Kit + Pickaxe/Sword/Gun tier Diamond/Void/Phoenix/Kings.
     function EP.wanted(item)
         local cat = epCategory(item)
-        if not cat then
-            return false
-        end
         local blob = string.lower((item.Name or "") .. " " .. tostring(item:GetAttribute("DisplayName") or ""))
         blob = blob:gsub("[^%a]", "")
+        if not cat then
+            -- броня: только сеты Kings/Phoenix (надеваются через Interact)
+            local ok, c = pcall(S.getGearItemCategory, item)
+            return ok and c == "Armor" and not blob:find("kingslayer", 1, true)
+                and (blob:find("phoenix", 1, true) or blob:find("kings", 1, true)) and true or false
+        end
         for _, bad in ipairs(EP.excludeNames) do
             if blob:find(bad, 1, true) then
                 return false
@@ -32186,8 +32189,12 @@ do
                 if #list == 0 then
                     break
                 end
+                local nm = tostring(list[1].item.Name)
                 if EP.pickup(list[1].item, true) then
                     picked += 1
+                    pcall(appendfile, "DrillFarm.log", os.date("%H:%M:%S") .. " [Gear] взял " .. nm .. string.char(10))
+                else
+                    pcall(appendfile, "DrillFarm.log", os.date("%H:%M:%S") .. " [Gear] не взял " .. nm .. string.char(10))
                 end
                 task.wait(0.05)
             end
