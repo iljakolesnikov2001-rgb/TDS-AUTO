@@ -299,6 +299,8 @@ local CHEST_CATALOG = {
     { label = "Diamond Chest", canon = "diamond" },
     { label = "Void Chest", canon = "void" },
     { label = "Core Chest", canon = "core" },
+    { label = "Phoenix Chest", canon = "phoenix" },
+    { label = "Kings Chest", canon = "kings" },
     { label = "Mimic", canon = "mimic" },
 }
 
@@ -332,6 +334,10 @@ local CHEST_ALIAS = {
     coreschest = "core",
     chestcore = "core",
     mimic = "mimic",
+    phoenix = "phoenix",
+    phoenixchest = "phoenix",
+    kings = "kings",
+    kingschest = "kings",
 }
 for _, entry in ipairs(CHEST_CATALOG) do
     table.insert(CHEST_TYPE_OPTIONS, entry.label)
@@ -17903,6 +17909,7 @@ function S.runAutofarmCycle()
                 S.enterDungeonForLoot(dungeon)
             end)
             local entered = wasInside or LocalPlayer:GetAttribute("InDungeon") == true
+            pcall(appendfile, "DrillFarm.log", os.date("%H:%M:%S") .. " [Dungeon] " .. dungeon.Name .. (entered and " — вошёл" or " — не вошёл") .. "\n")
             Autofarm.skipDungeonsUntil = Autofarm.skipDungeonsUntil or {}
             Autofarm.skipDungeonsUntil[dungeon] = tick() + (entered and 120 or 25)
             if entered then
@@ -25287,6 +25294,10 @@ function S.coreRefreshChestPick()
         picked = S.chestSelectionList(CoreFarm.chestTypes)
     end
     if #picked > 0 then
+        -- Phoenix/Kings всегда открываем (их нет в старых сохранённых списках)
+        for _, extra in ipairs({ "Phoenix Chest", "Kings Chest" }) do
+            if not table.find(picked, extra) then picked[#picked + 1] = extra end
+        end
         CoreFarm._chestPick = picked
     end
     return picked
@@ -25305,7 +25316,7 @@ function S.coreHoldChestRun()
     Autofarm.chestTypes = picked
     Autofarm.openChests = true
     Autofarm.enterMines = false
-    Autofarm.enterDungeons = false
+    Autofarm.enterDungeons = CoreFarm.joinDungeon == true -- раньше всегда false: переключатель данжей игнорировался
     Autofarm.oreUnderEnabled = false
     Autofarm.autoSell = false
 end
@@ -25405,7 +25416,7 @@ function S.coreApplyRun()
     Autofarm.chestTypes = picked
     Autofarm.openChests = true
     Autofarm.enterMines = false
-    Autofarm.enterDungeons = false
+    Autofarm.enterDungeons = CoreFarm.joinDungeon == true -- раньше всегда false: переключатель данжей игнорировался
     Autofarm.oreUnderEnabled = false
     Autofarm.autoSell = false
     S.setAutoLoot(false)
