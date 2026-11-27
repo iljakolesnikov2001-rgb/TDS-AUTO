@@ -10,6 +10,6 @@ task.spawn(function()
     if ok and type(items) == "table" then
         local n = {}
         for _, it in ipairs(items) do n[#n + 1] = tostring(type(it) == "table" and it.Name or it) end
-        pcall(appendfile, "DrillFarm.log", os.date("%H:%M:%S") .. " [Crate] в ящике: " .. table.concat(n, ", ") .. "\n")
+        pcall(appendfile, "DrillFarm.log", os.date("%H:%M:%S") .. " [Crate] в ящике " .. #n .. " вещей, последние: " .. table.concat(n, ", ", math.max(1, #n - 4)) .. "\n")
     end
 end)
