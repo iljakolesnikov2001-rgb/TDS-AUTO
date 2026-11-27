@@ -25550,7 +25550,8 @@ function S.kpGearSweep()
     for _, it in ipairs(folder:GetChildren()) do
         local n = (it.Name .. " " .. tostring(it:GetAttribute("DisplayName") or "")):lower()
         if (n:find("kings", 1, true) or n:find("phoenix", 1, true)) and not n:find("kingslayer", 1, true)
-            and not CollectionService:HasTag(it, "ShopItem") then
+            and not CollectionService:HasTag(it, "ShopItem")
+            and not (S.EPick and S.EPick.wanted and not S.EPick.wanted(it)) then
             local p = S.getItemPosition(it)
             if p then list[#list + 1] = { it = it, p = p, d = (p - root.Position).Magnitude } end
         end
@@ -29547,6 +29548,39 @@ function S.mineRunVisitSaveGear(part)
     S.restorePromptsAfterHold(promptBackup)
     S.restoreCameraAim(camBackup)
 
+    -- удержание E не выбирает вещи само → явно сохраняем лучшие через RF (лимит слотов сервера)
+    pcall(function()
+        local rf = game:GetService("ReplicatedStorage").Packages._Index["sleitnick_knit@1.4.6"].knit.Services.PlayerService.RF
+        local choices = rf.GetSaveGearChoices:InvokeServer()
+        if type(choices) ~= "table" then return end
+        local limit = math.max(0, math.floor(tonumber(choices.Limit) or 9))
+        local rank = { kings = 6, phoenix = 5, blackhole = 5, void = 4, diamond = 3, gold = 2 }
+        local entries = {}
+        for _, it in pairs(choices.Items or {}) do
+            local cnt = math.max(0, math.floor(tonumber(it.Count) or 0))
+            if type(it.Id) == "string" and cnt > 0 then
+                local n, r = string.lower(tostring(it.Name)), 0
+                for k, v in pairs(rank) do
+                    if n:find(k, 1, true) and not n:find("kingslayer", 1, true) then r = math.max(r, v) end
+                end
+                entries[#entries + 1] = { id = it.Id, name = tostring(it.Name), cnt = cnt, r = r }
+            end
+        end
+        table.sort(entries, function(a, b) return a.r > b.r end)
+        local payload, total, names = {}, 0, {}
+        for _, e in ipairs(entries) do
+            local take = math.min(e.cnt, limit - total)
+            if take > 0 then
+                payload[e.id] = take
+                total += take
+                names[#names + 1] = e.name .. "x" .. take
+            end
+        end
+        if total == 0 then return end
+        local res = rf.SaveGear:InvokeServer(payload)
+        pcall(appendfile, "DrillFarm.log", os.date("%H:%M:%S") .. " [Save] " .. table.concat(names, ", ") .. " → " .. tostring(res) .. "\n")
+    end)
+
     -- Game shows "Return to Lobby? Your gear will be saved" -> press Teleport.
     local confirmed = S.mineRunConfirmReturnLobby(6)
 
@@ -31779,6 +31813,19 @@ do
             end
         end
         return false
+    end
+
+    -- подбор заменяет вещь в слоте (старая выпадает) → брать только строго лучше текущей
+    local baseWanted = EP.wanted
+    function EP.wanted(item)
+        if not baseWanted(item) then
+            return false
+        end
+        local ok, better = pcall(function()
+            local cat = S.getGearItemCategory(item)
+            return S.getWorldGearScore(item) > S.getCurrentGearScore(cat, item)
+        end)
+        return ok and better == true
     end
 
     -- 1) Không kéo item về người cho 4 loại gear này (nguồn gốc lỗi teleport lặp).
