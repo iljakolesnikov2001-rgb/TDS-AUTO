@@ -31883,10 +31883,19 @@ do
         if not baseWanted(item) then
             return false
         end
+        local ws, cs
         local ok, better = pcall(function()
             local cat = S.getGearItemCategory(item)
-            return S.getWorldGearScore(item) > S.getCurrentGearScore(cat, item)
+            ws, cs = S.getWorldGearScore(item), S.getCurrentGearScore(cat, item)
+            return ws > cs
         end)
+        if not (ok and better == true) then
+            EP._skipLogged = EP._skipLogged or {}
+            if not EP._skipLogged[item] then
+                EP._skipLogged[item] = true
+                pcall(appendfile, "DrillFarm.log", os.date("%H:%M:%S") .. " [Gear] пропуск " .. tostring(item.Name) .. " " .. tostring(ws) .. "<=" .. tostring(cs) .. (ok and "" or (" err " .. tostring(better))) .. "\n")
+            end
+        end
         return ok and better == true
     end
 
