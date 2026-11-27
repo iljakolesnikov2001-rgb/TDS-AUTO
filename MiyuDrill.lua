@@ -31000,6 +31000,15 @@ function S.autofarmVisitChest(chest)
     if Autofarm.scrapSweep == true and S.ScrapSweep and S.ScrapSweep.owned == true then
         return false
     end
+    -- данж выключен: сундуки внутри данжа снаружи не открываются — не ходить к ним вовсе
+    if Autofarm.enterDungeons ~= true and LocalPlayer:GetAttribute("InDungeon") ~= true then
+        local ok, inside = pcall(S.isDungeonInteriorChest, chest)
+        if ok and inside then
+            Autofarm.lockedChestSkip = Autofarm.lockedChestSkip or {}
+            Autofarm.lockedChestSkip[chest] = tick() + 3600
+            return false
+        end
+    end
     return S._ssOrigVisitChest(chest)
 end
 
