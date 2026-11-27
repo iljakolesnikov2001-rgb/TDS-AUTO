@@ -14616,7 +14616,12 @@ function S.playerGuiSaysChestLocked()
     if not pg then
         return false
     end
+    local base = S._chestLockBase
     for _, gui in ipairs(pg:GetDescendants()) do
+        -- тост "locked" висит несколько секунд: старый (виден до подхода к этому сундуку) не считаем
+        if base and base[gui] and base[gui] == gui.Text then
+            continue
+        end
         if gui:IsA("TextLabel") or gui:IsA("TextButton") or gui:IsA("TextBox") then
             local t = string.lower(gui.Text or "")
             if t:find("chest is locked", 1, true)
@@ -21180,6 +21185,18 @@ function S.autofarmVisitChest(chest)
     if not S.chestHasProximityPrompt(chest) then
         return false
     end
+    S._chestLockBase = nil
+    do
+        local base = {}
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        for _, gui in ipairs(pg and pg:GetDescendants() or {}) do
+            if gui:IsA("TextLabel") or gui:IsA("TextButton") or gui:IsA("TextBox") then
+                local t = string.lower(gui.Text or "")
+                if t:find("locked", 1, true) then base[gui] = gui.Text end
+            end
+        end
+        S._chestLockBase = base
+    end
 
     local savedDist = Autofarm.distance or S.syncAutofarmDistanceFromRoot()
     local prompts = S.collectProximityPrompts(chest)
@@ -21353,7 +21370,13 @@ function S.autofarmVisitChest(chest)
             -- Not opened and no "locked" message: don't retry forever.
             local fails = (Autofarm.chestFailCount[chest] or 0) + 1
             Autofarm.chestFailCount[chest] = fails
-            if fails >= (tonumber(Autofarm.chestMaxFails) or 2) then
+            -- сундук сокровищницы данжа снаружи не открыть (нужна зачистка) — не возвращаться к нему
+            local inDungeon = false
+            pcall(function() inDungeon = S.isDungeonInteriorChest(chest) == true end)
+            if inDungeon and LocalPlayer:GetAttribute("InDungeon") ~= true then
+                skipFor = 3600
+                Autofarm.chestFailCount[chest] = nil
+            elseif fails >= (tonumber(Autofarm.chestMaxFails) or 2) then
                 skipFor = longSkip
                 Autofarm.chestFailCount[chest] = nil
                 pcall(S.hubLog, "Chest won't open - skipping to next")
@@ -21367,6 +21390,20 @@ function S.autofarmVisitChest(chest)
         end
     end
     Autofarm.lockedChestSkip[chest] = tick() + skipFor
+    pcall(function()
+        local why = ok and "открыл" or (lockedHit and "заперт" or "не открылся")
+        local txt = ""
+        local p = S.collectProximityPrompts(chest)[1]
+        if p then txt = " [" .. tostring(p.ActionText) .. "/" .. tostring(p.ObjectText) .. " hold=" .. tostring(p.HoldDuration) .. " en=" .. tostring(p.Enabled) .. " par=" .. p.Parent.Name .. "]" end
+        if not ok then
+            local a = {}
+            for k, v in pairs(chest:GetAttributes()) do a[#a + 1] = k .. "=" .. tostring(v) end
+            local kids = {}
+            for _, c in ipairs(chest:GetChildren()) do kids[#kids + 1] = c.Name end
+            txt = txt .. " attr{" .. table.concat(a, ",") .. "} kids{" .. table.concat(kids, ",") .. "} " .. chest:GetFullName()
+        end
+        appendfile("DrillFarm.log", os.date("%H:%M:%S") .. " [Chest] " .. tostring(S.chestCanon(chest)) .. " " .. why .. txt .. string.char(10))
+    end)
     if typeof(getgenv) == "function" and getgenv().MiyuGUI_DEBUG then
         pcall(function()
             print("[MiyuGUI chest]", chest:GetFullName(), "ok=", ok, "lockedHit=", lockedHit, "skipFor=", math.floor(skipFor))
