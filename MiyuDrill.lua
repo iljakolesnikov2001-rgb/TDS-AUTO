@@ -13508,8 +13508,11 @@ end
 
 function S.tierFromKeys(token, keys)
     local best = 0
+    -- GoblinKing/Kingslayer содержат "king" — не путать с сетом Kings
+    local plain = token:gsub("goblinking", "#"):gsub("kingslayer", "#")
     for _, entry in ipairs(keys) do
-        if token:find(entry.key, 1, true) and entry.rank > best then
+        local t = (entry.key == "kings" or entry.key == "king") and plain or token
+        if t:find(entry.key, 1, true) and entry.rank > best then
             best = entry.rank
         end
     end
