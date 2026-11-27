@@ -31003,7 +31003,9 @@ function S.autofarmVisitChest(chest)
     -- данж выключен: сундуки внутри данжа снаружи не открываются — не ходить к ним вовсе
     if Autofarm.enterDungeons ~= true and LocalPlayer:GetAttribute("InDungeon") ~= true then
         local ok, inside = pcall(S.isDungeonInteriorChest, chest)
-        if ok and inside then
+        -- SoulPrison: по логу 0 открытий из 50 попыток (заперт/не открылся)
+        local soul = chest:IsDescendantOf(workspace) and chest:GetFullName():find("SoulPrison", 1, true) ~= nil
+        if (ok and inside) or soul then
             Autofarm.lockedChestSkip = Autofarm.lockedChestSkip or {}
             Autofarm.lockedChestSkip[chest] = tick() + 3600
             return false
